@@ -67,6 +67,7 @@ export interface DataTableProps<D extends object> extends TableOptions<D> {
   noResults?: string | ((filterString: string) => ReactNode);
   sticky?: boolean;
   rowCount: number;
+  enableGrouping: boolean | undefined;
   wrapperRef?: MutableRefObject<HTMLDivElement>;
   onColumnOrderChange: () => void;
   renderGroupingHeaders?: () => JSX.Element;
@@ -105,6 +106,7 @@ export default typedMemo(function DataTable<D extends object>({
   onColumnOrderChange,
   renderGroupingHeaders,
   renderTimeComparisonDropdown,
+  enableGrouping,
   ...moreUseTableOptions
 }: DataTableProps<D>): JSX.Element {
   const tableHooks: PluginHook<D>[] = [
@@ -188,6 +190,7 @@ export default typedMemo(function DataTable<D extends object>({
     wrapStickyTable,
     setColumnOrder,
     allColumns,
+    flatHeaders,
     state: { pageIndex, pageSize, globalFilter: filterValue, sticky = {} },
   } = useTable<D>(
     {
@@ -255,23 +258,131 @@ export default typedMemo(function DataTable<D extends object>({
     e.preventDefault();
   };
 
+  const renderHeaders = (columns: any, depth = 0) => {
+    if (!columns || columns.length === 0) {
+      return null;
+    }
+
+    return (
+      <tr>
+        {columns.map((column: any, index: any) => {
+          // If the column is a group, render a <th> with colSpan and nested headers
+          if (column.isGroup) {
+            const childColumns = renderHeaders(column.columns, depth + 1);
+            const colSpan = calculateColSpan(column, depth);
+            return (
+              <th
+                key={column.Header || column.id}
+                colSpan={colSpan}
+                style={{
+                  textAlign: 'center',
+                  verticalAlign: childColumns ? 'bottom' : 'middle',
+                  fontWeight: 'bold',
+                  padding: '0 0px', // Adjust padding as needed
+                  /* eslint-disable-next-line */
+                  border: '1px solid #ddd', // Border for clarity of grouping
+                  borderCollapse: 'collapse',
+                  width: '100%',
+                }}
+              >
+                <tr>
+                  <th
+                    key={column.Header || column.id}
+                    colSpan={colSpan}
+                    style={{
+                      textAlign: 'center',
+                      verticalAlign: childColumns ? 'bottom' : 'middle',
+                      fontWeight: 'bold',
+                      padding: '0 0px', // Adjust padding as needed
+                      /* eslint-disable-next-line */
+                      border: `1px solid #ddd`, // Border for clarity of grouping
+                      borderCollapse: 'collapse',
+                      width: '100%',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        height: '100%',
+                      }}
+                    >
+                      {column.Header}
+                    </div>
+                  </th>
+                </tr>
+                {childColumns}
+              </th>
+            );
+          }
+
+          // If it's a leaf column, render a simple <th>
+          const col: any = flatHeaders.find(c => c.id === column.id) || {};
+          return col.render('Header', {
+            key: col.id,
+            ...col.getSortByToggleProps(),
+            onDragStart,
+            onDrop,
+          });
+        })}
+      </tr>
+    );
+  };
+
+  // Calculate colSpan with depth consideration
+  const calculateColSpan = (column: any, depth = 0) => {
+    // If the column is a group, it has a nested structure
+    if (column.headers && column.headers.length > 0) {
+      let colSpan = 0;
+      column.headers.forEach((childColumn: any) => {
+        // Exclude the column if depth equals its index (to avoid duplicate headers)
+
+        colSpan += calculateColSpan(childColumn, depth + 1);
+      });
+      return colSpan;
+    }
+
+    // It's a leaf column, so it has a colSpan of 1
+    return 1;
+  };
+
   const renderTable = () => (
     <table {...getTableProps({ className: tableClassName })}>
       <thead>
         {renderGroupingHeaders ? renderGroupingHeaders() : null}
-        {headerGroups.map(headerGroup => {
+        {/* {enableGrouping && renderHeaders(columns)} */}
+        {headerGroups.map((headerGroup, idx) => {
           const { key: headerGroupKey, ...headerGroupProps } =
             headerGroup.getHeaderGroupProps();
           return (
             <tr key={headerGroupKey || headerGroup.id} {...headerGroupProps}>
-              {headerGroup.headers.map(column =>
-                column.render('Header', {
+              {headerGroup.headers.map((column: any) => {
+                if (!column.label) {
+                  return (
+                    <th
+                      key={column.id}
+                      colSpan={calculateColSpan(column)}
+                      style={{
+                        textAlign: 'center',
+                        fontWeight: 'bold',
+                        /* eslint-disable-next-line */
+                        border: '1px solid #ddd', // Border for clarity of grouping
+                        borderCollapse: 'collapse',
+                        // Add any other styles you want for group headers
+                      }}
+                    >
+                      {column.render('Header')}
+                    </th>
+                  );
+                }
+                return column.render('Header', {
                   key: column.id,
                   ...column.getSortByToggleProps(),
                   onDragStart,
                   onDrop,
-                }),
-              )}
+                });
+              })}
             </tr>
           );
         })}

@@ -551,9 +551,9 @@ export type ControlFormItemSpec<T extends ControlType = ControlType> = {
             defaultValue?: number;
             validators?: ControlFormValueValidator<number>[];
           }
-        : T extends 'Input'
+        : T extends 'Input' | 'TextArea'
           ? {
-              controlType: 'Input';
+              controlType: 'Input' | 'TextArea';
               value?: string;
               defaultValue?: string;
               validators?: ControlFormValueValidator<string>[];

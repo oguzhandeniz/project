@@ -46,6 +46,7 @@ export interface ColumnConfigInfo {
 }
 
 export type ControlFormItemDefaultSpec = ControlFormItemSpec<
+  // @ts-ignore:
   keyof typeof ControlFormItemComponents
 >;
 

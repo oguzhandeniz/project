@@ -18,7 +18,7 @@
  */
 import { sharedControlComponents } from '@superset-ui/chart-controls';
 import { Select } from 'src/components';
-import { Input, InputNumber } from 'src/components/Input';
+import { Input, InputNumber, TextArea } from 'src/components/Input';
 import Slider from 'src/components/Slider';
 import CurrencyControl from '../../CurrencyControl';
 import CheckboxControl from '../../CheckboxControl';
@@ -27,6 +27,7 @@ export const ControlFormItemComponents = {
   Slider,
   InputNumber,
   Input,
+  TextArea,
   Select,
   // Directly export Checkbox will result in "using name from external module" error
   // ref: https://stackoverflow.com/questions/43900035/ts4023-exported-variable-x-has-or-is-using-name-y-from-external-module-but

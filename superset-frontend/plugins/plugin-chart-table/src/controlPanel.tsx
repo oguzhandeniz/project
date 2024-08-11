@@ -314,6 +314,18 @@ const config: ControlPanelConfig = {
         ],
         [
           {
+            name: 'enableGrouping',
+            config: {
+              type: 'CheckboxControl',
+              label: t('Allow Column Grouping'),
+              default: false,
+              description: t('Columns can be grouped together'),
+              resetOnHide: false,
+            },
+          },
+        ],
+        [
+          {
             name: 'server_pagination',
             config: {
               type: 'CheckboxControl',
@@ -470,6 +482,15 @@ const config: ControlPanelConfig = {
                 return true;
               },
               mapStateToProps(explore, _, chart) {
+                if (explore?.controls?.enableGrouping?.value) {
+                  for (const col in explore?.form_data?.column_config) {
+                    /* eslint-disable-next-line */
+                    explore.form_data.column_config[col].groups = explore
+                      ?.form_data?.column_config[col].groups
+                      ? explore?.form_data?.column_config[col].groups
+                      : ''; // eslint-disable-line
+                  }
+                }
                 return {
                   queryResponse: chart?.queriesResponse?.[0] as
                     | ChartDataResponseResult

@@ -38,7 +38,8 @@ export type SharedColumnConfigProp =
   | 'horizontalAlign'
   | 'truncateLongCells'
   | 'showCellBars'
-  | 'currencyFormat';
+  | 'currencyFormat'
+  | 'groups';
 
 const d3NumberFormat: ControlFormItemSpec<'Select'> = {
   allowNewOptions: true,
@@ -88,7 +89,19 @@ const columnWidth: ControlFormItemSpec<'InputNumber'> = {
   width: 120,
   placeholder: t('auto'),
   debounceDelay: 400,
+  // @ts-ignore:
   validators: [validateNumber],
+};
+// @ts-ignore:
+const groups: ControlFormItemSpec<'TextArea'> = {
+  controlType: 'TextArea',
+  label: t('Groups'),
+  description: t(
+    'Specify column path separated by comma. Ex Assume G1 is parent of S1 which is parent of C1, it wil be represented as G1,S1,C1',
+  ),
+  width: 120,
+  placeholder: t('g1,g2...'),
+  debounceDelay: 4000,
 };
 
 const horizontalAlign: ControlFormItemSpec<'RadioButtonControl'> & {
@@ -174,6 +187,7 @@ export const SHARED_COLUMN_CONFIG_PROPS = {
   alignPositiveNegative,
   colorPositiveNegative,
   currencyFormat,
+  groups,
 };
 
 export const DEFAULT_CONFIG_FORM_LAYOUT: ColumnConfigFormLayout = {
@@ -183,6 +197,7 @@ export const DEFAULT_CONFIG_FORM_LAYOUT: ColumnConfigFormLayout = {
       { name: 'horizontalAlign', override: { defaultValue: 'left' } },
     ],
     ['truncateLongCells'],
+    ['groups'],
   ],
   [GenericDataType.Numeric]: [
     {
@@ -192,7 +207,7 @@ export const DEFAULT_CONFIG_FORM_LAYOUT: ColumnConfigFormLayout = {
           'columnWidth',
           { name: 'horizontalAlign', override: { defaultValue: 'right' } },
         ],
-        ['showCellBars'],
+        ['showCellBars', 'groups'],
         ['alignPositiveNegative'],
         ['colorPositiveNegative'],
       ],
@@ -212,11 +227,13 @@ export const DEFAULT_CONFIG_FORM_LAYOUT: ColumnConfigFormLayout = {
       { name: 'horizontalAlign', override: { defaultValue: 'left' } },
     ],
     ['d3TimeFormat'],
+    ['groups'],
   ],
   [GenericDataType.Boolean]: [
     [
       'columnWidth',
       { name: 'horizontalAlign', override: { defaultValue: 'left' } },
     ],
+    ['groups'],
   ],
 };

@@ -234,6 +234,7 @@ const getNoResultsMessage = (filter: string) =>
 export default function TableChart<D extends DataRecord = DataRecord>(
   props: TableChartTransformedProps<D> & {
     sticky?: DataTableProps<D>['sticky'];
+    enableGrouping?: boolean;
   },
 ) {
   const {
@@ -255,7 +256,8 @@ export default function TableChart<D extends DataRecord = DataRecord>(
     showCellBars = true,
     sortDesc = false,
     filters,
-    sticky = true, // whether to use sticky header
+    enableGrouping,
+    sticky = true, //! enableGrouping, // whether to use sticky header
     columnColorFormatters,
     allowRearrangeColumns = false,
     allowRenderHtml = true,
@@ -674,7 +676,10 @@ export default function TableChart<D extends DataRecord = DataRecord>(
   );
 
   const getColumnConfigs = useCallback(
-    (column: DataColumnMeta, i: number): ColumnWithLooseAccessor<D> => {
+    (
+      column: DataColumnMeta | any,
+      i: number,
+    ): ColumnWithLooseAccessor<D> | { label: any; key: any; group: any } => {
       const {
         key,
         label,
@@ -741,6 +746,9 @@ export default function TableChart<D extends DataRecord = DataRecord>(
         // must use custom accessor to allow `.` in column names
         // typing is incorrect in current version of `@types/react-table`
         // so we ask TS not to check.
+        label,
+        key,
+        group: config.groups ? config.groups.split(',') : [],
         accessor: ((datum: D) => datum[key]) as never,
         Cell: ({ value, row }: { value: DataRecordValue; row: Row<D> }) => {
           const [isHtml, text] = formatColumnValue(column, value);
@@ -1017,9 +1025,77 @@ export default function TableChart<D extends DataRecord = DataRecord>(
     ],
   );
 
+  const createGroupedColumns = (
+    flatColumns: ColumnWithLooseAccessor<D>[] | any,
+  ): any => {
+    const groupedColumns: any = [];
+    const groupsMap: { [key: string]: any } = {};
+
+    // Function to get the key for the current group path
+    const getGroupPathKey = (path: string[]): string => path.join(' > ');
+
+    flatColumns.forEach((column: any) => {
+      if (column.group && column.group.length > 0) {
+        // Split the group path into individual group names
+        const groupPath = Array.isArray(column.group)
+          ? column.group
+          : [column.group];
+        let currentGroup: any;
+        let groupKey = '';
+
+        // Process each group name in the path
+        groupPath.forEach((groupName: any, index: number) => {
+          groupKey = getGroupPathKey(groupPath.slice(0, index + 1));
+
+          // Create a new group if it doesn't exist
+          if (!groupsMap[groupKey]) {
+            const newGroup: any = {
+              Header: groupName,
+              isGroup: true,
+              index,
+              columns: [],
+            };
+
+            groupsMap[groupKey] = newGroup;
+
+            // Add the new group to the parent group if necessary
+            if (index === 0) {
+              // Top-level groups
+              groupedColumns.push(newGroup);
+            } else {
+              // Nested groups
+              const parentGroupKey = getGroupPathKey(groupPath.slice(0, index));
+              const parentGroup = groupsMap[parentGroupKey];
+              if (parentGroup) {
+                (parentGroup.columns as ColumnWithLooseAccessor<D>[]).push(
+                  newGroup,
+                );
+              }
+            }
+          }
+
+          currentGroup = groupsMap[groupKey];
+        });
+
+        // Add the column to the innermost group
+        if (currentGroup?.isGroup) {
+          (currentGroup.columns as ColumnWithLooseAccessor<D>[]).push(column);
+        }
+      } else {
+        // Columns without groups
+        groupedColumns.push(column);
+      }
+    });
+    console.log(groupedColumns);
+    return groupedColumns;
+  };
+
   const columns = useMemo(
-    () => filteredColumnsMeta.map(getColumnConfigs),
-    [filteredColumnsMeta, getColumnConfigs],
+    () =>
+      enableGrouping
+        ? createGroupedColumns(filteredColumnsMeta.map(getColumnConfigs))
+        : filteredColumnsMeta.map(getColumnConfigs),
+    [filteredColumnsMeta, getColumnConfigs, enableGrouping],
   );
 
   const handleServerPaginationChange = useCallback(
@@ -1092,6 +1168,7 @@ export default function TableChart<D extends DataRecord = DataRecord>(
         renderTimeComparisonDropdown={
           isUsingTimeComparison ? renderTimeComparisonDropdown : undefined
         }
+        enableGrouping={enableGrouping}
       />
     </Styles>
   );
