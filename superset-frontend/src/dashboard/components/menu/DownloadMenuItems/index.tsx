@@ -19,10 +19,12 @@
 import { Menu } from 'src/components/Menu';
 import DownloadScreenshot from './DownloadScreenshot';
 import { DownloadScreenshotFormat } from './types';
+import DownloadAsExcel from './DownloadAsExcel';
 
 export interface DownloadMenuItemProps {
   pdfMenuItemTitle: string;
   imageMenuItemTitle: string;
+  excelMenuItemTitle: string;
   dashboardTitle: string;
   logEvent?: Function;
   dashboardId: string;
@@ -32,6 +34,7 @@ const DownloadMenuItems = (props: DownloadMenuItemProps) => {
   const {
     pdfMenuItemTitle,
     imageMenuItemTitle,
+    excelMenuItemTitle,
     logEvent,
     dashboardId,
     ...rest
@@ -51,6 +54,13 @@ const DownloadMenuItems = (props: DownloadMenuItemProps) => {
         dashboardId={dashboardId}
         logEvent={logEvent}
         format={DownloadScreenshotFormat.PNG}
+        {...rest}
+      />
+      <DownloadAsExcel
+        text={excelMenuItemTitle}
+        dashboardId={dashboardId}
+        logEvent={logEvent}
+        format={DownloadScreenshotFormat.EXCEL}
         {...rest}
       />
     </Menu>

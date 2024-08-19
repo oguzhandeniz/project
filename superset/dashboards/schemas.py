@@ -476,3 +476,13 @@ class CacheScreenshotSchema(Schema):
     urlParams = fields.List(
         fields.List(fields.Str(), validate=lambda x: len(x) == 2), required=False
     )
+
+class ExcelExportSchema(Schema):
+    charts  = fields.Dict(keys=fields.Str(), values=fields.Raw(), required=False)
+    layout = fields.Dict(keys=fields.Str(), values=fields.Raw(), required=False)
+    dataMask = fields.Dict(keys=fields.Str(), values=fields.Raw(), required=False)
+    activeTabs = fields.List(fields.Str(), required=False)
+    anchor = fields.Str(required=False)
+    urlParams = fields.List(
+        fields.List(fields.Str(), validate=lambda x: len(x) == 2), required=False
+    )

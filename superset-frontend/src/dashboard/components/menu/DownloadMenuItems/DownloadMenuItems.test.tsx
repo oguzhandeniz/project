@@ -23,6 +23,7 @@ const createProps = () => ({
   pdfMenuItemTitle: 'Export to PDF',
   imageMenuItemTitle: 'Download as Image',
   dashboardTitle: 'Test Dashboard',
+  excelMenuItemTitle: 'Export to Excel',
   logEvent: jest.fn(),
   dashboardId: '123',
 });

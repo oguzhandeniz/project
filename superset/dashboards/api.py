@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 # pylint: disable=too-many-lines
+import contextlib
 import functools
 import logging
 from datetime import datetime
@@ -33,7 +34,8 @@ from werkzeug.wrappers import Response as WerkzeugResponse
 from werkzeug.wsgi import FileWrapper
 
 from superset import db, is_feature_enabled, thumbnail_cache
-from superset.charts.schemas import ChartEntityResponseSchema
+from superset.charts.post_processing import pivot_table_v2
+from superset.charts.schemas import ChartDataQueryContextSchema, ChartEntityResponseSchema
 from superset.commands.dashboard.create import CreateDashboardCommand
 from superset.commands.dashboard.delete import DeleteDashboardCommand
 from superset.commands.dashboard.exceptions import (
@@ -84,6 +86,7 @@ from superset.dashboards.schemas import (
     screenshot_query_schema,
     TabsPayloadSchema,
     thumbnail_query_schema,
+    ExcelExportSchema
 )
 from superset.extensions import event_logger
 from superset.models.dashboard import Dashboard
@@ -94,12 +97,15 @@ from superset.tasks.thumbnails import (
 )
 from superset.tasks.utils import get_current_user
 from superset.utils import json
+from superset.utils.dashboard_import_export import compute_dashboard_order, process_markdown
+from superset.utils.excel import create_excel_for_dashboard
 from superset.utils.pdf import build_pdf_from_screenshots
 from superset.utils.screenshots import (
     DashboardScreenshot,
     DEFAULT_DASHBOARD_WINDOW_SIZE,
 )
 from superset.utils.urls import get_url_path
+from superset.views.base import XlsxResponse, generate_download_headers
 from superset.views.base_api import (
     BaseSupersetModelRestApi,
     RelatedFieldFilter,
@@ -164,6 +170,7 @@ class DashboardRestApi(BaseSupersetModelRestApi):
         "thumbnail",
         "copy_dash",
         "cache_dashboard_screenshot",
+        "export_dashboard_excel",
         "screenshot",
     }
     resource_name = "dashboard"
@@ -956,6 +963,54 @@ class DashboardRestApi(BaseSupersetModelRestApi):
             FileWrapper(screenshot), mimetype="image/png", direct_passthrough=True
         )
 
+    @expose("/<pk>/export_dashboard_excel/", methods=("POST",))
+    @rison(screenshot_query_schema)
+    @safe
+    @statsd_metrics
+    @event_logger.log_this_with_context(
+        action=lambda self, *args, **kwargs: f"{self.__class__.__name__}"
+        f".exportExcel",
+        log_to_statsd=False,
+    )
+    def export_dashboard_excel(self, pk: int, **kwargs: Any) -> Any:
+      try:
+        # CSV export submits regular form data
+        with contextlib.suppress(TypeError, json.JSONDecodeError):
+            json_body = json.loads(request.form["form_data"])
+        payload = ExcelExportSchema().load(json_body)
+        charts = payload.get('charts',{})
+        # Compute the order of charts based on the dashboard layout
+        chart_order = compute_dashboard_order(payload.get('layout',{}))
+        chartsToGenerate=[]
+        for chart_metadata in chart_order:
+          try:
+            chart_type = chart_metadata['type']
+            if chart_type == 'CHART' and str(chart_metadata['metadata']['chartId']) in charts:
+              chart_id = str(chart_metadata['metadata']['chartId'])
+              query_context = ChartDataQueryContextSchema().load(charts[chart_id])
+              dataframe = query_context.get_df_payload(query_context.queries[0])
+              if query_context.form_data.get('viz_type','') == 'pivot_table_v2':
+                dataframe['df'] = pivot_table_v2(dataframe['df'],query_context.form_data)
+              chartsToGenerate.append({'dataframe':dataframe['df'],'formdata':query_context.form_data})
+            elif chart_type == 'HEADER':
+                chartsToGenerate.append({
+                  'header': chart_metadata['metadata'].get('text', '')
+                })
+            elif chart_type == 'MARKDOWN':
+              markdown_code = chart_metadata['metadata'].get('code', '')
+              processed_rows = process_markdown(markdown_code)
+              
+              chartsToGenerate.append({
+                  'markdown': markdown_code
+              })
+          except KeyError as ex:
+            raise ValidationError("Request is incorrect") from ex
+        excel = create_excel_for_dashboard(chartsToGenerate)
+        return XlsxResponse(excel, headers=generate_download_headers("xlsx"))
+      except ValidationError as error:
+        return self.response_400(message=error.messages)
+
+    
     @expose("/<pk>/cache_dashboard_screenshot/", methods=("POST",))
     @protect()
     @rison(screenshot_query_schema)
