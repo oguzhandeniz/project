@@ -67,28 +67,73 @@ function isNumeric(key: string, data: DataRecord[] = []) {
 const processDataRecords = memoizeOne(function processDataRecords(
   data: DataRecord[] | undefined,
   columns: DataColumnMeta[],
+  pageSize: number,
+  enableGrouping = false,
 ) {
   if (!data?.[0]) {
     return data || [];
   }
+
   const timeColumns = columns.filter(
     column => column.dataType === GenericDataType.Temporal,
   );
 
-  if (timeColumns.length > 0) {
-    return data.map(x => {
-      const datum = { ...x };
-      timeColumns.forEach(({ key, formatter }) => {
-        // Convert datetime with a custom date class so we can use `String(...)`
-        // formatted value for global search, and `date.getTime()` for sorting.
-        datum[key] = new DateWithFormatter(x[key], {
-          formatter: formatter as TimeFormatter,
-        });
+  const getRowKey = (row: DataRecord, upToColumnIndex: number) =>
+    columns
+      .slice(0, upToColumnIndex + 1)
+      .map(col => `${col.key}:${row[col.key]}`)
+      .join('|');
+
+  return data.map((row, rowIndex) => {
+    const processedRow = { ...row };
+
+    // Handle time columns
+    timeColumns.forEach(({ key, formatter }) => {
+      processedRow[key] = new DateWithFormatter(row[key], {
+        formatter: formatter as TimeFormatter,
       });
-      return datum;
     });
-  }
-  return data;
+
+    // Calculate rowspans and visibility for each cell
+    columns.forEach((column, columnIndex) => {
+      // @ts-ignore
+      if (enableGrouping && column.config?.allowRowGrouping) {
+        const cellKey = `${column.key}_meta`;
+        const rowKey = getRowKey(row, columnIndex);
+
+        let rowspan = 1;
+        let visible = true;
+
+        // Check if this cell should be visible (not merged into a previous cell)
+        if (rowIndex % pageSize > 0) {
+          const prevRowInPageKey = getRowKey(data[rowIndex - 1], columnIndex);
+          if (prevRowInPageKey === rowKey) {
+            visible = false;
+          }
+        }
+
+        // Calculate rowspan if the cell is visible
+        if (visible) {
+          for (
+            let i = rowIndex + 1;
+            i <
+            Math.min(data.length, rowIndex - (rowIndex % pageSize) + pageSize);
+            i += 1
+          ) {
+            if (getRowKey(data[i], columnIndex) === rowKey) {
+              rowspan += 1;
+            } else {
+              break;
+            }
+          }
+        }
+        // @ts-ignore
+        processedRow[cellKey] = { rowspan, visible };
+      }
+    });
+
+    return processedRow;
+  });
 });
 
 const calculateDifferences = (
@@ -580,7 +625,12 @@ const transformProps = (
     [baseQuery, totalQuery] = queriesData;
     rowCount = baseQuery?.rowcount ?? 0;
   }
-  const data = processDataRecords(baseQuery?.data, columns);
+  const data = processDataRecords(
+    baseQuery?.data,
+    columns,
+    getPageSize(pageLength, baseQuery?.data.length, columns.length),
+    enableGrouping,
+  );
   const comparisonData = processComparisonDataRecords(
     baseQuery?.data,
     columns,

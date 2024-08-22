@@ -39,7 +39,8 @@ export type SharedColumnConfigProp =
   | 'truncateLongCells'
   | 'showCellBars'
   | 'currencyFormat'
-  | 'groups';
+  | 'groups'
+  | 'allowRowGrouping';
 
 const d3NumberFormat: ControlFormItemSpec<'Select'> = {
   allowNewOptions: true,
@@ -139,6 +140,14 @@ const alignPositiveNegative: ControlFormItemSpec<'Checkbox'> = {
   debounceDelay: 200,
 };
 
+const allowRowGrouping: ControlFormItemSpec<'Checkbox'> = {
+  controlType: 'Checkbox',
+  label: t('Row Grouping'),
+  description: t('Whether to group consecutive column cells with same value'),
+  defaultValue: false,
+  debounceDelay: 200,
+};
+
 const colorPositiveNegative: ControlFormItemSpec<'Checkbox'> = {
   controlType: 'Checkbox',
   label: t('Color +/-'),
@@ -188,6 +197,7 @@ export const SHARED_COLUMN_CONFIG_PROPS = {
   colorPositiveNegative,
   currencyFormat,
   groups,
+  allowRowGrouping,
 };
 
 export const DEFAULT_CONFIG_FORM_LAYOUT: ColumnConfigFormLayout = {
@@ -196,7 +206,7 @@ export const DEFAULT_CONFIG_FORM_LAYOUT: ColumnConfigFormLayout = {
       'columnWidth',
       { name: 'horizontalAlign', override: { defaultValue: 'left' } },
     ],
-    ['truncateLongCells'],
+    ['truncateLongCells', 'allowRowGrouping'],
     ['groups'],
   ],
   [GenericDataType.Numeric]: [
@@ -208,7 +218,7 @@ export const DEFAULT_CONFIG_FORM_LAYOUT: ColumnConfigFormLayout = {
           { name: 'horizontalAlign', override: { defaultValue: 'right' } },
         ],
         ['showCellBars', 'groups'],
-        ['alignPositiveNegative'],
+        ['alignPositiveNegative', 'allowRowGrouping'],
         ['colorPositiveNegative'],
       ],
     },
@@ -228,6 +238,7 @@ export const DEFAULT_CONFIG_FORM_LAYOUT: ColumnConfigFormLayout = {
     ],
     ['d3TimeFormat'],
     ['groups'],
+    ['allowRowGrouping'],
   ],
   [GenericDataType.Boolean]: [
     [
@@ -235,5 +246,6 @@ export const DEFAULT_CONFIG_FORM_LAYOUT: ColumnConfigFormLayout = {
       { name: 'horizontalAlign', override: { defaultValue: 'left' } },
     ],
     ['groups'],
+    ['allowRowGrouping'],
   ],
 };

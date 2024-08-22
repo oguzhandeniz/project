@@ -84,7 +84,7 @@ def add_header_or_markdown(worksheet, row, content, max_columns, format):
             row += 1
         return row
 
-def add_dataframe_to_excel(writer, df, formdata, start_row=0,**kwargs):
+def add_dataframe_to_excel(writer, df, formdata, start_row=0, **kwargs):
     """Add a DataFrame to an Excel sheet with merged headers starting from a specific row."""
     column_config = formdata['column_config'] or {}
     grouped_columns = {}
@@ -102,8 +102,12 @@ def add_dataframe_to_excel(writer, df, formdata, start_row=0,**kwargs):
             current[col] = None
     
     # Calculate max header depth
-    max_depth = max(len(config['groups'].split(',')) for config in column_config.values() if 'groups' in config and config['groups'])
-
+    # Calculate max header depth, default to 0 if no groups are found
+    if any('groups' in config and config['groups'] for config in column_config.values()):
+        max_depth = max(len(config['groups'].split(',')) for config in column_config.values() if 'groups' in config and config['groups'])
+    else:
+        max_depth = 0
+    
     # Write the DataFrame after the headers, starting from the calculated start_row
     df.to_excel(writer, index=False, startrow=start_row + max_depth + 1, header=False, sheet_name='Sheet1')
     workbook = writer.book
@@ -118,7 +122,6 @@ def add_dataframe_to_excel(writer, df, formdata, start_row=0,**kwargs):
         'border': 1
     })
 
-    
     def find_group_for_column(groups, target_col):
         for group, subgroups in groups.items():
             if isinstance(subgroups, dict):
@@ -172,12 +175,36 @@ def add_dataframe_to_excel(writer, df, formdata, start_row=0,**kwargs):
     worksheet.conditional_format(start_row + max_depth + 1, 0, start_row + max_depth + len(df), len(df.columns) - 1, 
                                  {'type': 'no_blanks', 'format': cell_format_with_borders})
 
+    # Apply row grouping based on allowRowGrouping
+    for col, column in enumerate(df.columns):
+        if column in column_config and column_config[column].get('allowRowGrouping', False):
+            start_merge_row = None
+            current_value = None
+            for row in range(len(df)):
+                value = df.iloc[row, col]
+                
+                # Check if the value is the same as the current value, and if previous columns are identical
+                if value == current_value and all(df.iloc[row, prev_col] == df.iloc[start_merge_row, prev_col] for prev_col in range(col)):
+                    if start_merge_row is None:
+                        start_merge_row = row - 1
+                else:
+                    if start_merge_row is not None:
+                        worksheet.merge_range(start_row + max_depth + 1 + start_merge_row, col, start_row + max_depth + 1 + row - 1, col, current_value, merge_format)
+                        start_merge_row = None
+                    current_value = value
+                    start_merge_row = row  # Update to start merging from this row
+
+            # Handle the final group if it extends to the last row
+            if start_merge_row is not None:
+                worksheet.merge_range(start_row + max_depth + 1 + start_merge_row, col, start_row + max_depth + len(df), col, current_value, merge_format)
+
     # Set column widths
     for i, column in enumerate(df.columns):
         if column in column_config and 'columnWidth' in column_config[column]:
             worksheet.set_column(i, i, pixels_to_excel_width(column_config[column]['columnWidth']))
         else:
             worksheet.set_column(i, i, 15)
+
 
 def addTablewithoutgrouping(writer, df, formdata, start_row=0,**kwargs):
     df.to_excel(writer,index=True, startrow=start_row+1, header=True, sheet_name='Sheet1')

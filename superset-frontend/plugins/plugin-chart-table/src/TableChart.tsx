@@ -751,6 +751,13 @@ export default function TableChart<D extends DataRecord = DataRecord>(
         group: config.groups ? config.groups.split(',') : [],
         accessor: ((datum: D) => datum[key]) as never,
         Cell: ({ value, row }: { value: DataRecordValue; row: Row<D> }) => {
+          const cellMeta = row.original[`${column.key}_meta`];
+
+          // If the cell is not visible (merged into a previous cell), return null
+          // @ts-ignore
+          if (enableGrouping && config.allowRowGrouping && !cellMeta?.visible) {
+            return null;
+          }
           const [isHtml, text] = formatColumnValue(column, value);
           const html = isHtml && allowRenderHtml ? { __html: text } : undefined;
 
@@ -849,6 +856,12 @@ export default function TableChart<D extends DataRecord = DataRecord>(
           const cellProps = {
             'aria-labelledby': `header-${column.key}`,
             role: 'cell',
+            rowSpan:
+              // @ts-ignore
+              enableGrouping && config.allowRowGrouping && cellMeta?.rowspan > 1
+                ? // @ts-ignore
+                  cellMeta.rowspan
+                : undefined,
             // show raw number in title in case of numeric values
             title: typeof value === 'number' ? String(value) : undefined,
             onClick:
@@ -1086,7 +1099,6 @@ export default function TableChart<D extends DataRecord = DataRecord>(
         groupedColumns.push(column);
       }
     });
-    console.log(groupedColumns);
     return groupedColumns;
   };
 
