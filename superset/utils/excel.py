@@ -86,7 +86,7 @@ def add_header_or_markdown(worksheet, row, content, max_columns, format):
 
 def add_dataframe_to_excel(writer, df, formdata, start_row=0, **kwargs):
     """Add a DataFrame to an Excel sheet with merged headers starting from a specific row."""
-    column_config = formdata['column_config'] or {}
+    column_config = formdata.get('column_config',{})
     grouped_columns = {}
     
     # Parse column groups from formdata
@@ -183,20 +183,29 @@ def add_dataframe_to_excel(writer, df, formdata, start_row=0, **kwargs):
             for row in range(len(df)):
                 value = df.iloc[row, col]
                 
-                # Check if the value is the same as the current value, and if previous columns are identical
-                if value == current_value and all(df.iloc[row, prev_col] == df.iloc[start_merge_row, prev_col] for prev_col in range(col)):
+                # Check if the value is the same as the current value and if previous columns are identical
+                if (value == current_value and 
+                    not pd.isna(value) and  # Ensure value is not NaN
+                    all(df.iloc[row, prev_col] == df.iloc[start_merge_row, prev_col] 
+                        for prev_col in range(col) 
+                        if not pd.isna(df.iloc[row, prev_col]))):  # Ensure previous columns are not NaN
                     if start_merge_row is None:
                         start_merge_row = row - 1
                 else:
                     if start_merge_row is not None:
-                        worksheet.merge_range(start_row + max_depth + 1 + start_merge_row, col, start_row + max_depth + 1 + row - 1, col, current_value, merge_format)
+                        worksheet.merge_range(start_row + max_depth + 1 + start_merge_row, col, 
+                                            start_row + max_depth + 1 + row - 1, col, 
+                                            current_value, merge_format)
                         start_merge_row = None
                     current_value = value
-                    start_merge_row = row  # Update to start merging from this row
+                    if not pd.isna(value):  # Update start_merge_row only if the value is not NaN
+                        start_merge_row = row
 
             # Handle the final group if it extends to the last row
             if start_merge_row is not None:
-                worksheet.merge_range(start_row + max_depth + 1 + start_merge_row, col, start_row + max_depth + len(df), col, current_value, merge_format)
+                worksheet.merge_range(start_row + max_depth + 1 + start_merge_row, col, 
+                                    start_row + max_depth + len(df) - 1, col, 
+                                    current_value, merge_format)
 
     # Set column widths
     for i, column in enumerate(df.columns):
