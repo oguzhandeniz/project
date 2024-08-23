@@ -629,7 +629,9 @@ const transformProps = (
   const data = processDataRecords(
     baseQuery?.data,
     columns,
-    getPageSize(pageLength, baseQuery?.data.length, columns.length),
+    serverPagination
+      ? serverPageLength
+      : getPageSize(pageLength, baseQuery?.data.length, columns.length),
     enableGrouping,
   );
   const comparisonData = processComparisonDataRecords(
