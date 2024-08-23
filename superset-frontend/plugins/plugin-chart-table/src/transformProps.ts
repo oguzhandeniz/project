@@ -73,7 +73,8 @@ const processDataRecords = memoizeOne(function processDataRecords(
   if (!data?.[0]) {
     return data || [];
   }
-
+  // eslint-disable-next-line
+  if (pageSize === 0) pageSize = data.length;
   const timeColumns = columns.filter(
     column => column.dataType === GenericDataType.Temporal,
   );
