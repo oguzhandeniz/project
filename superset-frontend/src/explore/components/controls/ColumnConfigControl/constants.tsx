@@ -40,7 +40,8 @@ export type SharedColumnConfigProp =
   | 'showCellBars'
   | 'currencyFormat'
   | 'groups'
-  | 'allowRowGrouping';
+  | 'allowRowGrouping'
+  | 'showTotal';
 
 const d3NumberFormat: ControlFormItemSpec<'Select'> = {
   allowNewOptions: true,
@@ -148,6 +149,14 @@ const allowRowGrouping: ControlFormItemSpec<'Checkbox'> = {
   debounceDelay: 200,
 };
 
+const showTotal: ControlFormItemSpec<'Checkbox'> = {
+  controlType: 'Checkbox',
+  label: t('Show Total'),
+  description: t('Show Total of the column'),
+  defaultValue: false,
+  debounceDelay: 200,
+};
+
 const colorPositiveNegative: ControlFormItemSpec<'Checkbox'> = {
   controlType: 'Checkbox',
   label: t('Color +/-'),
@@ -198,6 +207,7 @@ export const SHARED_COLUMN_CONFIG_PROPS = {
   currencyFormat,
   groups,
   allowRowGrouping,
+  showTotal,
 };
 
 export const DEFAULT_CONFIG_FORM_LAYOUT: ColumnConfigFormLayout = {
@@ -207,7 +217,7 @@ export const DEFAULT_CONFIG_FORM_LAYOUT: ColumnConfigFormLayout = {
       { name: 'horizontalAlign', override: { defaultValue: 'left' } },
     ],
     ['truncateLongCells', 'allowRowGrouping'],
-    ['groups'],
+    ['groups', 'showTotal'],
   ],
   [GenericDataType.Numeric]: [
     {
@@ -219,7 +229,7 @@ export const DEFAULT_CONFIG_FORM_LAYOUT: ColumnConfigFormLayout = {
         ],
         ['showCellBars', 'groups'],
         ['alignPositiveNegative', 'allowRowGrouping'],
-        ['colorPositiveNegative'],
+        ['colorPositiveNegative', 'showTotal'],
       ],
     },
     {
@@ -246,6 +256,6 @@ export const DEFAULT_CONFIG_FORM_LAYOUT: ColumnConfigFormLayout = {
       { name: 'horizontalAlign', override: { defaultValue: 'left' } },
     ],
     ['groups'],
-    ['allowRowGrouping'],
+    ['allowRowGrouping', 'showTotal'],
   ],
 };

@@ -1002,7 +1002,7 @@ export default function TableChart<D extends DataRecord = DataRecord>(
                   }
                 `}
               >
-                {t('Summary')}
+                {isRawRecords ? t('Total') : t('Summary')}
                 <Tooltip
                   overlay={t(
                     'Show total aggregations of selected metrics. Note that row limit does not apply to the result.',
@@ -1014,7 +1014,13 @@ export default function TableChart<D extends DataRecord = DataRecord>(
             </th>
           ) : (
             <td style={sharedStyle}>
-              <strong>{formatColumnValue(column, totals[key])[1]}</strong>
+              {isRawRecords ? (
+                <strong>
+                  {formatColumnValue(column, totals[`SUM(${key})`])[1]}
+                </strong>
+              ) : (
+                <strong>{formatColumnValue(column, totals[key])[1]}</strong>
+              )}
             </td>
           )
         ) : undefined,

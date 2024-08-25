@@ -256,6 +256,43 @@ const buildQuery: BuildQuery<TableChartFormData> = (
       });
     }
 
+    // Filter columns where showTotal is true
+    const columnsWithShowTotal: string[] = Object.keys(
+      // @ts-ignore
+      formData.column_config,
+    ).filter(
+      column =>
+        // @ts-ignore
+        formData.column_config?.get(column, {}).showTotal,
+    );
+
+    if (
+      columnsWithShowTotal.length > 0 &&
+      formData.show_column_totals &&
+      queryMode === QueryMode.Raw
+    ) {
+      const columnTotalMetrics: any = columnsWithShowTotal.map(column => ({
+        label: `SUM(${column})`,
+        aggregate: 'SUM',
+        column: { column_name: column },
+        dataSourceWarning: false,
+        expressionType: 'SIMPLE',
+        hasCustomLabel: false,
+      }));
+      // Create the extra query object with empty columns and the new sum metrics
+      extraQueries.push({
+        ...queryObject,
+        columns: [], // Empty the columns
+        metrics: columnTotalMetrics, // Add the sum metrics
+        row_limit: 0,
+        row_offset: 0,
+        post_processing: [], // You might add specific post-processing functions here if needed
+        extras: undefined, // No need for time grain
+        order_desc: undefined, // No need for ordering
+        orderby: undefined, // This query is just for getting the sum
+      });
+    }
+
     const interactiveGroupBy = formData.extra_form_data?.interactive_groupby;
     if (interactiveGroupBy && queryObject.columns) {
       queryObject.columns = [

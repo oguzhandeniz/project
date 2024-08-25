@@ -443,6 +443,7 @@ const transformProps = (
     order_desc: sortDesc = false,
     query_mode: queryMode,
     show_totals: showTotals,
+    show_column_totals: showColumnTotals,
     conditional_formatting: conditionalFormatting,
     allow_rearrange_columns: allowRearrangeColumns,
     allow_render_html: allowRenderHtml,
@@ -640,7 +641,8 @@ const transformProps = (
     comparisonSuffix,
   );
   const totals =
-    showTotals && queryMode === QueryMode.Aggregate
+    (showTotals && queryMode === QueryMode.Aggregate) ||
+    (showColumnTotals && queryMode === QueryMode.Raw)
       ? isUsingTimeComparison
         ? processComparisonTotals(comparisonSuffix, totalQuery?.data)
         : totalQuery?.data[0]

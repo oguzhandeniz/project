@@ -389,6 +389,19 @@ const config: ControlPanelConfig = {
               resetOnHide: false,
             },
           },
+          {
+            name: 'show_column_totals',
+            config: {
+              type: 'CheckboxControl',
+              label: t('Show column totals'),
+              default: false,
+              description: t(
+                'Show total sum of Numeric columns. Note that row limit does not apply to the result.',
+              ),
+              visibility: isRawMode,
+              resetOnHide: false,
+            },
+          },
         ],
       ],
     },
