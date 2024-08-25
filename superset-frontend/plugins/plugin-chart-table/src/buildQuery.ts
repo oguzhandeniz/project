@@ -263,7 +263,7 @@ const buildQuery: BuildQuery<TableChartFormData> = (
     ).filter(
       column =>
         // @ts-ignore
-        formData.column_config?.get(column, {}).showTotal,
+        formData.column_config[column].showTotal,
     );
 
     if (
