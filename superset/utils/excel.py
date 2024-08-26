@@ -84,8 +84,9 @@ def add_header_or_markdown(worksheet, row, content, max_columns, format):
             row += 1
         return row
 
-def add_dataframe_to_excel(writer, df, formdata, start_row=0, **kwargs):
+def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
     """Add a DataFrame to an Excel sheet with merged headers starting from a specific row."""
+    formdata = queryContext.form_data
     column_config = formdata.get('column_config',{})
     grouped_columns = {}
     
@@ -107,9 +108,19 @@ def add_dataframe_to_excel(writer, df, formdata, start_row=0, **kwargs):
         max_depth = max(len(config['groups'].split(',')) for config in column_config.values() if 'groups' in config and config['groups'])
     else:
         max_depth = 0
-    
+    if queryContext.form_data.get('query_mode', '') == 'raw' and queryContext.form_data.get('show_column_totals', False):
+        total_df = queryContext.get_df_payload(queryContext.queries[1]).get('df')
+        # Initialize a dictionary to hold the totals row
+        totals = {col: None for col in df.columns}
+        totals[df.columns[0]] = 'Total'  # Set the first column value to "Total"
+        # Iterate through the columns to compute the sums
+        for col in df.columns:
+            if 'SUM('+col+')' in total_df.columns:
+                totals[col] = total_df['SUM('+col+')'].sum()  # Calculate the sum of the original column
+        df.loc[len(df)] = totals
     # Write the DataFrame after the headers, starting from the calculated start_row
     df.to_excel(writer, index=False, startrow=start_row + max_depth + 1, header=False, sheet_name='Sheet1')
+    
     workbook = writer.book
     worksheet = writer.sheets['Sheet1']
 
@@ -206,7 +217,7 @@ def add_dataframe_to_excel(writer, df, formdata, start_row=0, **kwargs):
                 worksheet.merge_range(start_row + max_depth + 1 + start_merge_row, col, 
                                     start_row + max_depth + len(df) - 1, col, 
                                     current_value, merge_format)
-
+    
     # Set column widths
     for i, column in enumerate(df.columns):
         if column in column_config and 'columnWidth' in column_config[column]:
@@ -244,21 +255,21 @@ def create_excel_for_dashboard(dataframes,**kwargs) -> Any:
             if 'markdown' in chart:
                 start_row = add_header_or_markdown(worksheet, start_row, chart['markdown'], max_columns, markdown_format)
             if 'dataframe' in chart:
-                if(chart['formdata'].get('enableGrouping',False)):
-                    add_dataframe_to_excel(writer,chart['dataframe'],chart['formdata'], start_row)
+                if(chart['query_context'].form_data.get('enableGrouping',False)):
+                    add_dataframe_to_excel(writer,chart['dataframe'],chart['query_context'], start_row)
                 else:
-                    addTablewithoutgrouping(writer,chart['dataframe'],chart['formdata'], start_row)
+                    addTablewithoutgrouping(writer,chart['dataframe'],chart['query_context'], start_row)
                 # Update max_columns
                 max_columns = max(max_columns, len(chart['dataframe'].columns))
-                start_row += len(chart['dataframe']) + calculate_max_depth(parse_grouped_columns(chart['formdata'].get('column_config',{}))) + 3
+                start_row += len(chart['dataframe']) + calculate_max_depth(parse_grouped_columns(chart['query_context'].form_data.get('column_config',{}))) + 3
 
     return output.getvalue()
 
-def create_excel_with_merged_headers(df, formdata) -> Any:
+def create_excel_with_merged_headers(df, queryContext) -> Any:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         # Write the DataFrame starting after the headers, with borders
-        add_dataframe_to_excel(writer, df, formdata, 0)
+        add_dataframe_to_excel(writer, df, queryContext, 0)
     return output.getvalue()
 
 

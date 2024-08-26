@@ -368,7 +368,7 @@ class ChartDataRestApi(ChartRestApi):
 
             is_csv_format = result_format == ChartDataResultFormat.CSV
 
-            if len(result["queries"]) == 1:
+            if len(result["queries"]) == 1 or form_data.get('show_column_totals',False):
                 # return single query results
                 data = result["queries"][0]["data"]
                 if is_csv_format:
