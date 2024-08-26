@@ -259,7 +259,7 @@ const buildQuery: BuildQuery<TableChartFormData> = (
     // Filter columns where showTotal is true
     const columnsWithShowTotal: string[] = Object.keys(
       // @ts-ignore
-      formData.column_config,
+      formData.column_config || {},
     ).filter(
       column =>
         // @ts-ignore
