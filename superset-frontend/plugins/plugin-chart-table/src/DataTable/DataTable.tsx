@@ -410,9 +410,10 @@ export default typedMemo(function DataTable<D extends object>({
       </tbody>
       {shouldRenderFooter && (
         <tfoot>
-          {footerGroups.map(footerGroup => {
+          {footerGroups.map((footerGroup, idx) => {
             const { key: footerGroupKey, ...footerGroupProps } =
               footerGroup.getHeaderGroupProps();
+            if (enableGrouping && idx > 0) return null;
             return (
               <tr
                 key={footerGroupKey || footerGroup.id}

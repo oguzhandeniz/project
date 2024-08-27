@@ -271,14 +271,24 @@ const buildQuery: BuildQuery<TableChartFormData> = (
       formData.show_column_totals &&
       queryMode === QueryMode.Raw
     ) {
-      const columnTotalMetrics: any = columnsWithShowTotal.map(column => ({
-        label: `SUM(${column})`,
-        aggregate: 'SUM',
-        column: { column_name: column },
-        dataSourceWarning: false,
-        expressionType: 'SIMPLE',
-        hasCustomLabel: false,
-      }));
+      const columnTotalMetrics: any = columnsWithShowTotal.map(column => {
+        const isExpression = !columns.includes(column);
+        return {
+          label: `SUM(${column})`,
+          aggregate: 'SUM',
+          column: !isExpression ? { column_name: column } : null,
+          dataSourceWarning: false,
+          expressionType: isExpression ? 'SQL' : 'SIMPLE',
+          hasCustomLabel: false,
+          // @ts-ignore
+          sqlExpression: isExpression
+            ? `SUM(${columns.find(
+                item => typeof item === 'object' && item.label === column,
+                // @ts-ignore
+              )?.sqlExpression})`
+            : null,
+        };
+      });
       // Create the extra query object with empty columns and the new sum metrics
       extraQueries.push({
         ...queryObject,
