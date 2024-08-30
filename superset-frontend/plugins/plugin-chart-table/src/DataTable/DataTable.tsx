@@ -229,7 +229,7 @@ export default typedMemo(function DataTable<D extends object>({
     ) as JSX.Element;
   }
 
-  const shouldRenderFooter = columns.some(x => !!x.Footer);
+  const shouldRenderFooter = allColumns.some(x => !!x.Footer);
 
   let columnBeingDragged = -1;
 

@@ -108,6 +108,7 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
         max_depth = max(len(config['groups'].split(',')) for config in column_config.values() if 'groups' in config and config['groups'])
     else:
         max_depth = 0
+    has_total_row = False
     if queryContext.form_data.get('query_mode', '') == 'raw' and queryContext.form_data.get('show_column_totals', False):
         total_df = queryContext.get_df_payload(queryContext.queries[1]).get('df')
         # Initialize a dictionary to hold the totals row
@@ -118,6 +119,7 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
             if 'SUM('+col+')' in total_df.columns:
                 totals[col] = total_df['SUM('+col+')'].sum()  # Calculate the sum of the original column
         df.loc[len(df)] = totals
+        has_total_row = True
     # Write the DataFrame after the headers, starting from the calculated start_row
     df.to_excel(writer, index=False, startrow=start_row + max_depth + 1, header=False, sheet_name='Sheet1')
     
@@ -187,19 +189,23 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
                                  {'type': 'no_blanks', 'format': cell_format_with_borders})
 
     # Apply row grouping based on allowRowGrouping
+    try:
+        anchor_column =  formdata.get('row_grouping_column')
+        anchor_column_index = df.columns.get_loc(anchor_column)
+    except:
+        anchor_column_index = 0
     for col, column in enumerate(df.columns):
         if column in column_config and column_config[column].get('allowRowGrouping', False):
             start_merge_row = None
             current_value = None
             for row in range(len(df)):
                 value = df.iloc[row, col]
-                
+                anchor_value = df.iloc[row, anchor_column_index]
                 # Check if the value is the same as the current value and if previous columns are identical
                 if (value == current_value and 
                     not pd.isna(value) and  # Ensure value is not NaN
-                    all(df.iloc[row, prev_col] == df.iloc[start_merge_row, prev_col] 
-                        for prev_col in range(col) 
-                        if not pd.isna(df.iloc[row, prev_col]))):  # Ensure previous columns are not NaN
+                    not pd.isna(anchor_value) and
+                    anchor_value == df.iloc[start_merge_row, anchor_column_index]): 
                     if start_merge_row is None:
                         start_merge_row = row - 1
                 else:
@@ -212,12 +218,7 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
                     if not pd.isna(value):  # Update start_merge_row only if the value is not NaN
                         start_merge_row = row
 
-            # Handle the final group if it extends to the last row
-            if start_merge_row is not None:
-                worksheet.merge_range(start_row + max_depth + 1 + start_merge_row, col, 
-                                    start_row + max_depth + len(df) - 1, col, 
-                                    current_value, merge_format)
-    
+            
     # Set column widths
     for i, column in enumerate(df.columns):
         if column in column_config and 'columnWidth' in column_config[column]:

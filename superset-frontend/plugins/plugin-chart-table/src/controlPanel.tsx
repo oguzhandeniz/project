@@ -46,7 +46,7 @@ import {
   sections,
 } from '@superset-ui/chart-controls';
 
-import { isEmpty } from 'lodash';
+import { isEmpty, isObject } from 'lodash';
 import { PAGE_SIZE_OPTIONS } from './consts';
 import { ColorSchemeEnum } from './types';
 
@@ -114,6 +114,7 @@ const allColumnsControl: typeof sharedControls.groupby = {
         ? [t('must have a value')]
         : [],
   }),
+  rerender: ['row_grouping_column'],
   visibility: isRawMode,
   resetOnHide: false,
 };
@@ -326,6 +327,29 @@ const config: ControlPanelConfig = {
         ],
         [
           {
+            name: 'row_grouping_column',
+            config: {
+              type: 'SelectControl',
+              label: t('Row Grouping Column'),
+              description: t('Group rows based on this colum'),
+              multi: false,
+              default: '',
+              valueKey: 'column',
+              mapStateToProps: ({ controls }) => ({
+                options:
+                  // @ts-ignore
+                  controls?.all_columns?.value?.map((c: ColumnMeta) => ({
+                    column: isObject(c) ? c.label : c,
+                  })) || [],
+              }),
+              visibility: ({ controls }: ControlPanelsContainerProps) =>
+                Boolean(controls?.enableGrouping?.value),
+              resetOnHide: false,
+            },
+          },
+        ],
+        [
+          {
             name: 'server_pagination',
             config: {
               type: 'CheckboxControl',
@@ -489,7 +513,7 @@ const config: ControlPanelConfig = {
               label: t('Customize columns'),
               description: t('Further customize how to display each column'),
               width: 400,
-              height: 320,
+              height: 400,
               renderTrigger: true,
               shouldMapStateToProps() {
                 return true;

@@ -69,6 +69,7 @@ const processDataRecords = memoizeOne(function processDataRecords(
   columns: DataColumnMeta[],
   pageSize: number,
   enableGrouping = false,
+  anchorColumn: string,
 ) {
   if (!data?.[0]) {
     return data || [];
@@ -79,11 +80,16 @@ const processDataRecords = memoizeOne(function processDataRecords(
     column => column.dataType === GenericDataType.Temporal,
   );
 
-  const getRowKey = (row: DataRecord, upToColumnIndex: number) =>
-    columns
-      .slice(0, upToColumnIndex + 1)
-      .map(col => `${col.key}:${row[col.key]}`)
-      .join('|');
+  const anchorColumnIndex = anchorColumn
+    ? columns.findIndex(col => col.key === anchorColumn)
+    : -1;
+
+  const getRowKey = (row: DataRecord, columnIndex: number) => {
+    if (anchorColumnIndex >= 0 && columnIndex > anchorColumnIndex) {
+      return `${row[anchorColumn]}:${row[columns[columnIndex].key]}`;
+    }
+    return `${row[columns[columnIndex].key]}`;
+  };
 
   return data.map((row, rowIndex) => {
     const processedRow = { ...row };
@@ -452,6 +458,7 @@ const transformProps = (
     comparison_color_scheme: comparisonColorScheme = ColorSchemeEnum.Green,
     comparison_type,
     enableGrouping,
+    row_grouping_column: rowGroupingColumn,
   } = formData;
   const isUsingTimeComparison =
     !isEmpty(time_compare) &&
@@ -634,6 +641,7 @@ const transformProps = (
       ? serverPageLength
       : getPageSize(pageLength, baseQuery?.data.length, columns.length),
     enableGrouping,
+    rowGroupingColumn,
   );
   const comparisonData = processComparisonDataRecords(
     baseQuery?.data,
