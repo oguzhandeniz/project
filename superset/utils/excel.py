@@ -217,7 +217,11 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
                     current_value = value
                     if not pd.isna(value):  # Update start_merge_row only if the value is not NaN
                         start_merge_row = row
-
+            # Handle the final group if it extends to the last row
+            if start_merge_row is not None and (not has_total_row):
+                worksheet.merge_range(start_row + max_depth + 1 + start_merge_row, col, 
+                                    start_row + max_depth + 1 + len(df) - 1, col, 
+                                    current_value, merge_format)
             
     # Set column widths
     for i, column in enumerate(df.columns):
