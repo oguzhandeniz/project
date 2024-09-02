@@ -17,7 +17,7 @@
 import io
 from typing import Any, List, Dict
 import pandas as pd
-
+import re
 
 def df_to_excel(df: pd.DataFrame, **kwargs: Any) -> Any:
     output = io.BytesIO()
@@ -84,6 +84,24 @@ def add_header_or_markdown(worksheet, row, content, max_columns, format):
             row += 1
         return row
 
+def convert_html_links(df):
+    """Convert HTML anchor tags to hyperlinks in a DataFrame."""
+    # Regex pattern to match HTML anchor tags.
+    anchor_tag_pattern = re.compile(r'<a href="(.*?)">(.*?)</a>')
+    
+    # Iterate through the DataFrame and replace anchor tags with hyperlinks.
+    for col in df.columns:
+        df[col] = df[col].apply(lambda x: convert_anchor_to_link(x, anchor_tag_pattern) if isinstance(x, str) else x)
+
+def convert_anchor_to_link(text, pattern):
+    """Convert a single HTML anchor tag to an Excel-friendly format."""
+    match = pattern.search(text)
+    if match:
+        url = match.group(1)       # Extract the URL.
+        display_text = match.group(2)  # Extract the display text.
+        return (url, display_text)  # Return as a tuple for further processing.
+    return text
+
 def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
     """Add a DataFrame to an Excel sheet with merged headers starting from a specific row."""
     formdata = queryContext.form_data
@@ -120,6 +138,8 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
                 totals[col] = total_df['SUM('+col+')'].sum()  # Calculate the sum of the original column
         df.loc[len(df)] = totals
         has_total_row = True
+    
+    convert_html_links(df)
     # Write the DataFrame after the headers, starting from the calculated start_row
     df.to_excel(writer, index=False, startrow=start_row + max_depth + 1, header=False, sheet_name='Sheet1')
     
@@ -134,6 +154,16 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
     cell_format_with_borders = workbook.add_format({
         'border': 1
     })
+    # Define the format for a hyperlink.
+    link_format = workbook.add_format({'font_color': 'blue', 'underline': True})
+
+    # Write headers and data
+    for r_idx in range(len(df)):
+        for c_idx, value in enumerate(df.iloc[r_idx]):
+            if isinstance(value, tuple):
+                # Write the URL and display text
+                worksheet.write_url(start_row + max_depth + 1 + r_idx, c_idx, value[0], string=value[1],cell_format=link_format)
+
 
     def find_group_for_column(groups, target_col):
         for group, subgroups in groups.items():
