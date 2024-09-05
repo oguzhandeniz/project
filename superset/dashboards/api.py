@@ -989,6 +989,10 @@ class DashboardRestApi(BaseSupersetModelRestApi):
               chart_id = str(chart_metadata['metadata']['chartId'])
               query_context = ChartDataQueryContextSchema().load(charts[chart_id])
               dataframe = query_context.get_df_payload(query_context.queries[0])
+              columns = list(dataframe['df'].columns)
+              verbose_map = query_context.datasource.verbose_map
+              if verbose_map:
+                  dataframe['df'].columns = [verbose_map.get(column, column) for column in columns]
               if query_context.form_data.get('viz_type','') == 'pivot_table_v2':
                 dataframe['df'] = pivot_table_v2(dataframe['df'],query_context.form_data)
               chartsToGenerate.append({'dataframe':dataframe['df'],'query_context':query_context})

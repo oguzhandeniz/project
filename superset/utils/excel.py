@@ -128,14 +128,18 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
         max_depth = 0
     has_total_row = False
     if queryContext.form_data.get('query_mode', '') == 'raw' and queryContext.form_data.get('show_column_totals', False):
-        total_df = queryContext.get_df_payload(queryContext.queries[1]).get('df')
+        isServerPagination = queryContext.form_data.get('server_pagination',False)
+        total_df = queryContext.get_df_payload(queryContext.queries[2 if isServerPagination else 1]).get('df')
         # Initialize a dictionary to hold the totals row
-        totals = {col: None for col in df.columns}
+        if queryContext.datasource.verbose_map:
+            totals = {queryContext.datasource.verbose_map[col]:None  for col in queryContext.datasource.verbose_map if queryContext.datasource.verbose_map[col] in df.columns}
+        else:
+            totals = {col: None for col in df.columns}
         totals[df.columns[0]] = 'Total'  # Set the first column value to "Total"
         # Iterate through the columns to compute the sums
-        for col in df.columns:
-            if 'SUM('+col+')' in total_df.columns:
-                totals[col] = total_df['SUM('+col+')'].sum()  # Calculate the sum of the original column
+        for col in queryContext.datasource.verbose_map :
+            if queryContext.datasource.verbose_map[col] in df.columns and 'SUM('+col+')' in total_df.columns:
+                totals[queryContext.datasource.verbose_map[col]] = total_df['SUM('+col+')'].sum()  # Calculate the sum of the original column
         df.loc[len(df)] = totals
         has_total_row = True
     
