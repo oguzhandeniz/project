@@ -19,6 +19,8 @@ from typing import Any, List, Dict
 import pandas as pd
 import re
 
+from superset.charts.post_processing import table
+
 def df_to_excel(df: pd.DataFrame, **kwargs: Any) -> Any:
     output = io.BytesIO()
 
@@ -142,7 +144,7 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
                 totals[queryContext.datasource.verbose_map[col]] = total_df['SUM('+col+')'].sum()  # Calculate the sum of the original column
         df.loc[len(df)] = totals
         has_total_row = True
-    
+    df = table(df,formdata)
     convert_html_links(df)
     # Write the DataFrame after the headers, starting from the calculated start_row
     df.to_excel(writer, index=False, startrow=start_row + max_depth + 1, header=False, sheet_name='Sheet1')
@@ -220,7 +222,8 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
     
     # Apply the border format to all data cells
     worksheet.conditional_format(start_row + max_depth + 1, 0, start_row + max_depth + len(df), len(df.columns) - 1, 
-                                 {'type': 'no_blanks', 'format': cell_format_with_borders})
+                                 {'type': 'formula',
+        'criteria': 'TRUE', 'format': cell_format_with_borders})
 
     # Apply row grouping based on allowRowGrouping
     try:
