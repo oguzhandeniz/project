@@ -68,6 +68,7 @@ export interface DataTableProps<D extends object> extends TableOptions<D> {
   sticky?: boolean;
   rowCount: number;
   enableGrouping: boolean | undefined;
+  enableHorizontalMode: boolean | undefined;
   wrapperRef?: MutableRefObject<HTMLDivElement>;
   onColumnOrderChange: () => void;
   renderGroupingHeaders?: () => JSX.Element;
@@ -107,6 +108,7 @@ export default typedMemo(function DataTable<D extends object>({
   renderGroupingHeaders,
   renderTimeComparisonDropdown,
   enableGrouping,
+  enableHorizontalMode,
   ...moreUseTableOptions
 }: DataTableProps<D>): JSX.Element {
   const tableHooks: PluginHook<D>[] = [
@@ -114,9 +116,13 @@ export default typedMemo(function DataTable<D extends object>({
     useSortBy,
     usePagination,
     useColumnOrder,
-    doSticky ? useSticky : [],
+    // doSticky ? useSticky : [],
     hooks || [],
   ].flat();
+  if (!enableHorizontalMode) {
+    tableHooks.push(useSticky);
+  }
+
   const columnNames = Object.keys(data?.[0] || {});
   const previousColumnNames = usePrevious(columnNames);
   const resultsSize = serverPagination ? rowCount : data.length;
@@ -352,62 +358,84 @@ export default typedMemo(function DataTable<D extends object>({
       <thead>
         {renderGroupingHeaders ? renderGroupingHeaders() : null}
         {/* {enableGrouping && renderHeaders(columns)} */}
-        {headerGroups.map((headerGroup, idx) => {
-          const { key: headerGroupKey, ...headerGroupProps } =
-            headerGroup.getHeaderGroupProps();
-          return (
-            <tr key={headerGroupKey || headerGroup.id} {...headerGroupProps}>
-              {headerGroup.headers.map((column: any) => {
-                if (!column.label) {
-                  return (
-                    <th
-                      key={column.id}
-                      colSpan={calculateColSpan(column)}
-                      style={{
-                        textAlign: 'center',
-                        fontWeight: 'bold',
-                        /* eslint-disable-next-line */
-                        border: '1px solid #ddd', // Border for clarity of grouping
-                        borderCollapse: 'collapse',
-                        // Add any other styles you want for group headers
-                      }}
-                    >
-                      {column.render('Header')}
-                    </th>
-                  );
-                }
-                return column.render('Header', {
-                  key: column.id,
-                  ...column.getSortByToggleProps(),
-                  onDragStart,
-                  onDrop,
-                });
-              })}
-            </tr>
-          );
-        })}
-      </thead>
-      <tbody {...getTableBodyProps()}>
-        {page && page.length > 0 ? (
-          page.map(row => {
-            prepareRow(row);
-            const { key: rowKey, ...rowProps } = row.getRowProps();
+        {!enableHorizontalMode &&
+          headerGroups.map((headerGroup, idx) => {
+            const { key: headerGroupKey, ...headerGroupProps } =
+              headerGroup.getHeaderGroupProps();
             return (
-              <tr key={rowKey || row.id} {...rowProps} role="row">
-                {row.cells.map(cell =>
-                  cell.render('Cell', { key: cell.column.id }),
-                )}
+              <tr key={headerGroupKey || headerGroup.id} {...headerGroupProps}>
+                {headerGroup.headers.map((column: any) => {
+                  if (!column.label) {
+                    return (
+                      <th
+                        key={column.id}
+                        colSpan={calculateColSpan(column)}
+                        style={{
+                          textAlign: 'center',
+                          fontWeight: 'bold',
+                          /* eslint-disable-next-line */
+                          border: '1px solid #ddd', // Border for clarity of grouping
+                          borderCollapse: 'collapse',
+                          // Add any other styles you want for group headers
+                        }}
+                      >
+                        {column.render('Header')}
+                      </th>
+                    );
+                  }
+                  return column.render('Header', {
+                    key: column.id,
+                    ...column.getSortByToggleProps(),
+                    onDragStart,
+                    onDrop,
+                  });
+                })}
               </tr>
             );
-          })
-        ) : (
-          <tr>
-            <td className="dt-no-results" colSpan={columns.length}>
-              {noResults}
-            </td>
-          </tr>
-        )}
-      </tbody>
+          })}
+      </thead>
+      {!enableHorizontalMode && (
+        <tbody {...getTableBodyProps()}>
+          {page && page.length > 0 ? (
+            page.map(row => {
+              prepareRow(row);
+              const { key: rowKey, ...rowProps } = row.getRowProps();
+              return (
+                <tr key={rowKey || row.id} {...rowProps} role="row">
+                  {row.cells.map(cell =>
+                    cell.render('Cell', { key: cell.column.id }),
+                  )}
+                </tr>
+              );
+            })
+          ) : (
+            <tr>
+              <td className="dt-no-results" colSpan={columns.length}>
+                {noResults}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      )}
+      {enableHorizontalMode && (
+        <tbody {...getTableBodyProps()}>
+          {headerGroups[0].headers.map(header => (
+            <tr key={header.id} role="row">
+              <th className="border border-slate-300 p-2 font-semibold bg-slate-100">
+                {header.render('Header')}
+              </th>
+              {page.map(row => {
+                prepareRow(row);
+                const cell: any = row.cells.find(
+                  cell => cell.column.id === header.id,
+                );
+                return cell.render('Cell', { key: cell.column.id });
+              })}
+            </tr>
+          ))}
+        </tbody>
+      )}
+      {/* Render footer if shouldRenderFooter is true */}
       {shouldRenderFooter && (
         <tfoot>
           {footerGroups.map((footerGroup, idx) => {

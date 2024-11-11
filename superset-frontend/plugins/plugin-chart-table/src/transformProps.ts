@@ -459,6 +459,7 @@ const transformProps = (
     comparison_type,
     enableGrouping,
     row_grouping_column: rowGroupingColumn,
+    enableHorizontalMode,
   } = formData;
   const isUsingTimeComparison =
     !isEmpty(time_compare) &&
@@ -709,6 +710,7 @@ const transformProps = (
     basicColorColumnFormatters,
     // @ts-ignore:
     enableGrouping,
+    enableHorizontalMode,
   };
 };
 

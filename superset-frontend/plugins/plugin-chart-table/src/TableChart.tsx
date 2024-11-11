@@ -235,6 +235,7 @@ export default function TableChart<D extends DataRecord = DataRecord>(
   props: TableChartTransformedProps<D> & {
     sticky?: DataTableProps<D>['sticky'];
     enableGrouping?: boolean;
+    enableHorizontalMode?: boolean;
   },
 ) {
   const {
@@ -266,6 +267,7 @@ export default function TableChart<D extends DataRecord = DataRecord>(
     isUsingTimeComparison,
     basicColorFormatters,
     basicColorColumnFormatters,
+    enableHorizontalMode,
   } = props;
   const comparisonColumns = [
     { key: 'all', label: t('Display all') },
@@ -1187,6 +1189,7 @@ export default function TableChart<D extends DataRecord = DataRecord>(
           isUsingTimeComparison ? renderTimeComparisonDropdown : undefined
         }
         enableGrouping={enableGrouping}
+        enableHorizontalMode={enableHorizontalMode}
       />
     </Styles>
   );

@@ -44,22 +44,22 @@ export default function DownloadAsExcel({
   const layout = useSelector(
     (state: RootState) => state.dashboardLayout?.present || undefined,
   );
-  const chartPayloads = {};
-  for (const chart in charts) {
-    const vizType = charts[chart].form_data?.viz_type;
-    if (vizType === 'table' || vizType === 'pivot_table_v2') {
-      chartPayloads[chart] = buildV1ChartDataPayload({
-        formData: charts[chart].latestQueryFormData,
-        resultFormat: 'xlsx',
-        resultType: vizType === 'pivot_table_v2' ? 'post_processed' : 'full',
-        force: false,
-        ownState: {},
-        setDataMask: {},
-      });
-    }
-  }
 
   const onDownloadExcel = () => {
+    const chartPayloads = {};
+    for (const chart in charts) {
+      const vizType = charts[chart].form_data?.viz_type;
+      if (vizType === 'table' || vizType === 'pivot_table_v2') {
+        chartPayloads[chart] = buildV1ChartDataPayload({
+          formData: charts[chart].latestQueryFormData,
+          resultFormat: 'xlsx',
+          resultType: vizType === 'pivot_table_v2' ? 'post_processed' : 'full',
+          force: false,
+          ownState: {},
+          setDataMask: {},
+        });
+      }
+    }
     SupersetClient.postForm(
       `/api/v1/dashboard/${dashboardId}/export_dashboard_excel`,
       {

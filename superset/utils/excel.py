@@ -268,6 +268,56 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
             worksheet.set_column(i, i, 15)
 
 
+def addHorizontalTable(writer, df, formdata, start_row=0, **kwargs):
+    """
+    Transforms and writes DataFrame to Excel in a horizontal layout where original columns
+    become rows and rows become columns.
+    
+    Parameters:
+    - writer: ExcelWriter object
+    - df: DataFrame to transform
+    - formdata: Additional formatting data (if needed)
+    - start_row: Starting row for the table (default 0)
+    """
+    # Create a new sheet
+    worksheet = writer.sheets['Sheet1'] if 'Sheet1' in writer.sheets else None
+    workbook = writer.book
+    
+    # Create formats
+    header_format = workbook.add_format({
+        'bold': True,
+        'bg_color': '#F0F0F0',
+        'border': 1,
+        'align': 'left'
+    })
+    
+    cell_format = workbook.add_format({
+        'border': 1,
+        'align': 'left'
+    })
+    
+    # Write headers (column names) in the first column
+    for idx, col_name in enumerate(df.columns):
+        worksheet.write(start_row + idx + 1, 0, col_name, header_format)
+    
+    # Write data for each row as a column
+    for row_idx, (_, row_data) in enumerate(df.iterrows()):
+        col_position = row_idx + 1
+        # Write data values
+        for data_idx, value in enumerate(row_data):
+            worksheet.write(start_row + data_idx + 1, col_position, value, cell_format)
+    
+    # Auto-fit columns
+    for col in range(len(df.index) + 1):
+        max_length = 0
+        for row in range(len(df.columns)):
+            cell_value = worksheet.table[start_row + row + 1][col] if col == 0 else \
+                        str(df.iloc[row_idx, row] if row < len(df.columns) else '')
+            max_length = max(max_length, len(str(cell_value)))
+        worksheet.set_column(col, col, max_length + 2)
+
+    return start_row + len(df.columns) + 1  # Return next row position
+
 def addTablewithoutgrouping(writer, df, formdata, start_row=0,**kwargs):
     df.to_excel(writer,index=True, startrow=start_row+1, header=True, sheet_name='Sheet1')
 
@@ -297,21 +347,51 @@ def create_excel_for_dashboard(dataframes,**kwargs) -> Any:
             if 'markdown' in chart:
                 start_row = add_header_or_markdown(worksheet, start_row, chart['markdown'], max_columns, markdown_format)
             if 'dataframe' in chart:
-                if(chart['query_context'].form_data.get('enableGrouping',False)):
+                form_data = chart['query_context'].form_data
+                if(form_data.get('enableGrouping',False)):
                     add_dataframe_to_excel(writer,chart['dataframe'],chart['query_context'], start_row)
+                
+                elif form_data.get('enableHorizontalMode', False):
+                    # Add horizontal table layout
+                    start_row = addHorizontalTable(
+                        writer,
+                        chart['dataframe'],
+                        chart['query_context'],
+                        start_row
+                    )
                 else:
                     addTablewithoutgrouping(writer,chart['dataframe'],chart['query_context'], start_row)
-                # Update max_columns
-                max_columns = max(max_columns, len(chart['dataframe'].columns))
-                start_row += len(chart['dataframe']) + calculate_max_depth(parse_grouped_columns(chart['query_context'].form_data.get('column_config',{}))) + 3
-
+                # Update max_columns for horizontal mode differently
+                if form_data.get('enableHorizontalMode', False):
+                    # In horizontal mode, rows become columns
+                    max_columns = max(max_columns, len(chart['dataframe'].index) + 1)
+                else:
+                    max_columns = max(max_columns, len(chart['dataframe'].columns))
+                
+                # Only calculate additional row increment for non-horizontal mode
+                if not form_data.get('enableHorizontalMode', False):
+                    start_row += len(chart['dataframe']) + calculate_max_depth(
+                        parse_grouped_columns(form_data.get('column_config', {}))
+                    ) + 3
+    
     return output.getvalue()
 
 def create_excel_with_merged_headers(df, queryContext) -> Any:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         # Write the DataFrame starting after the headers, with borders
-        add_dataframe_to_excel(writer, df, queryContext, 0)
+        if queryContext.form_data.get('enableHorizontalMode', False):
+            # Add horizontal table layout
+            workbook = writer.book
+            workbook.add_worksheet('Sheet1')
+            addHorizontalTable(
+                writer,
+                df,
+                queryContext,
+                0
+            )
+        else:
+            add_dataframe_to_excel(writer, df, queryContext, 0)
     return output.getvalue()
 
 

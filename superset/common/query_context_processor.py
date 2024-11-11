@@ -655,7 +655,7 @@ class QueryContextProcessor:
                     df, index=include_index, **config["CSV_EXPORT"]
                 )
             elif self._query_context.result_format == ChartDataResultFormat.XLSX:
-                if self._query_context.form_data.get('viz_type')=='table' and self._query_context.form_data.get('enableGrouping',False):
+                if self._query_context.form_data.get('viz_type')=='table' and (self._query_context.form_data.get('enableGrouping',False) or self._query_context.form_data.get('enableHorizontalMode',False)):
                     result = excel.create_excel_with_merged_headers(df,self._query_context)
                 else:
                     result = excel.df_to_excel(df, **config["EXCEL_EXPORT"])

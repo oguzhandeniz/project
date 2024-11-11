@@ -327,6 +327,18 @@ const config: ControlPanelConfig = {
         ],
         [
           {
+            name: 'enableHorizontalMode',
+            config: {
+              type: 'CheckboxControl',
+              label: t('Render in horizotal mode'),
+              default: false,
+
+              resetOnHide: false,
+            },
+          },
+        ],
+        [
+          {
             name: 'row_grouping_column',
             config: {
               type: 'SelectControl',
