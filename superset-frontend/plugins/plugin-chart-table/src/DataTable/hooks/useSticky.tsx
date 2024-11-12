@@ -80,6 +80,7 @@ export interface StickyState {
   hasVerticalScroll?: boolean;
   rendering?: boolean;
   setStickyState?: SetStickyState;
+  enableHorizontalMode?: boolean;
 }
 
 export interface UseStickyTableOptions {
@@ -118,12 +119,14 @@ function StickyWrap({
   height: maxHeight,
   children: table,
   setStickyState,
+  enableHorizontalMode,
 }: {
   width: number;
   height: number;
   setStickyState: SetStickyState;
   children: Table;
-  sticky?: StickyState; // current sticky element sizes
+  sticky?: StickyState;
+  enableHorizontalMode?: boolean; // current sticky element sizes
 }) {
   if (!table || table.type !== 'table') {
     throw new Error('<StickyWrap> must have only one <table> element as child');
@@ -153,7 +156,7 @@ function StickyWrap({
     const headerRows = Children.toArray(
       thead?.props.children,
     ).pop() as TrWithTh;
-    return headerRows.props.children.length;
+    return headerRows?.props.children.length;
   }, [thead]);
 
   const theadRef = useRef<HTMLTableSectionElement>(null); // original thead for layout computation
@@ -215,6 +218,22 @@ function StickyWrap({
       columnWidths: widths,
     });
   }, [maxWidth, maxHeight, setStickyState, scrollBarSize]);
+
+  if (enableHorizontalMode) {
+    return (
+      <div
+        style={{
+          width: maxWidth,
+          height: maxHeight,
+          overflow: 'auto',
+          scrollbarGutter: 'stable',
+        }}
+        role="table"
+      >
+        {table}
+      </div>
+    );
+  }
 
   let sizerTable: ReactElement | undefined;
   let headerTable: ReactElement | undefined;
@@ -354,6 +373,8 @@ function useInstance<D extends object>(instance: TableInstance<D>) {
     page,
     rows,
     allColumns,
+    // @ts-ignore
+    enableHorizontalMode,
     getTableSize = () => undefined,
   } = instance;
 
@@ -362,11 +383,12 @@ function useInstance<D extends object>(instance: TableInstance<D>) {
       dispatch({
         type: ReducerActions.SetStickyState,
         size,
+        enableHorizontalMode,
       });
     },
     // turning pages would also trigger a resize
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dispatch, getTableSize, page, rows],
+    [dispatch, enableHorizontalMode, getTableSize, page, rows],
   );
 
   const useStickyWrap = (renderer: TableRenderer) => {
@@ -394,6 +416,7 @@ function useInstance<D extends object>(instance: TableInstance<D>) {
         height={height}
         sticky={sticky}
         setStickyState={setStickyState}
+        enableHorizontalMode={enableHorizontalMode}
       >
         {table}
       </StickyWrap>

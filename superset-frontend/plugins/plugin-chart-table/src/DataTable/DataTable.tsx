@@ -116,12 +116,12 @@ export default typedMemo(function DataTable<D extends object>({
     useSortBy,
     usePagination,
     useColumnOrder,
-    // doSticky ? useSticky : [],
+    doSticky ? useSticky : [],
     hooks || [],
   ].flat();
-  if (!enableHorizontalMode) {
-    tableHooks.push(useSticky);
-  }
+  // if (!enableHorizontalMode) {
+  //   tableHooks.push(useSticky);
+  // }
 
   const columnNames = Object.keys(data?.[0] || {});
   const previousColumnNames = usePrevious(columnNames);
@@ -203,6 +203,8 @@ export default typedMemo(function DataTable<D extends object>({
       columns,
       data,
       initialState,
+      // @ts-ignore
+      enableHorizontalMode,
       getTableSize: defaultGetTableSize,
       globalFilter: defaultGlobalFilter,
       sortTypes,

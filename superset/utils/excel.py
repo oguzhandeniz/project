@@ -296,6 +296,18 @@ def addHorizontalTable(writer, df, formdata, start_row=0, **kwargs):
         'align': 'left'
     })
     
+    def safe_value(value):
+        """Handle NaN, Infinity, and other special values"""
+        import math
+        import numpy as np
+        
+        if isinstance(value, (float, np.floating)):
+            if math.isnan(value) or np.isnan(value):
+                return ''
+            if math.isinf(value) or np.isinf(value):
+                return 'Infinity' if value > 0 else '-Infinity'
+        return value
+    
     # Write headers (column names) in the first column
     for idx, col_name in enumerate(df.columns):
         worksheet.write(start_row + idx + 1, 0, col_name, header_format)
@@ -305,7 +317,8 @@ def addHorizontalTable(writer, df, formdata, start_row=0, **kwargs):
         col_position = row_idx + 1
         # Write data values
         for data_idx, value in enumerate(row_data):
-            worksheet.write(start_row + data_idx + 1, col_position, value, cell_format)
+            safe_val = safe_value(value)
+            worksheet.write(start_row + data_idx + 1, col_position, safe_val, cell_format)
     
     # Auto-fit columns
     for col in range(len(df.index) + 1):
