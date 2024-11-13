@@ -355,6 +355,78 @@ export default typedMemo(function DataTable<D extends object>({
     return 1;
   };
 
+  // Helper function to check if this position is part of a rowspan
+  const isPartOfSpan = (
+    header: any,
+    depth: number,
+    headerGroups: any[],
+  ): boolean => {
+    const parentHeader = findParentAtDepth(header, headerGroups[depth].headers);
+    if (!parentHeader) return false;
+
+    const leafIds: any = getAllLeafIds(parentHeader);
+    const firstLeafId = leafIds[0];
+    return header.id !== firstLeafId && leafIds.includes(header.id);
+  };
+  // Helper function to get all leaf header IDs under a parent
+  const getAllLeafIds = (header: any): string[] => {
+    if (!header.columns) return [header.id];
+    return header.columns.flatMap((col: any) => getAllLeafIds(col));
+  };
+
+  const getRowSpan = (header: any): number => {
+    if (!header?.columns) return 1;
+
+    // For complete hierarchy, count all leaf columns
+    const countLeafColumns = (h: any): number => {
+      if (!h.columns || h.columns.length === 0) return 1;
+      return h.columns.reduce(
+        (sum: number, col: any) => sum + countLeafColumns(col),
+        0,
+      );
+    };
+
+    return countLeafColumns(header);
+  };
+
+  // Helper to get the maximum depth of a header
+  const getHeaderMaxDepth = (header: any): number => {
+    if (!header.parent) return 0;
+    return 1 + getHeaderMaxDepth(header.parent);
+  };
+
+  const findParentAtDepth = (leafHeader: any, depthHeaders: any[]): any => {
+    // First check for direct parent at this depth
+    for (const header of depthHeaders) {
+      if (isParentOf(header, leafHeader)) {
+        return header;
+      }
+    }
+
+    return null;
+  };
+
+  // Helper function to get the first leaf header ID
+  const getFirstLeafId = (header: any): string => {
+    if (!header.columns) return header.id;
+    return getFirstLeafId(header.columns[0]);
+  };
+
+  // Helper function to check if header is parent
+  const isParentOf = (potentialParent: any, child: any): boolean => {
+    if (!potentialParent.columns) return false;
+
+    return potentialParent.columns.some(
+      (col: any) => col.id === child.id || isParentOf(col, child),
+    );
+  };
+
+  const shouldRenderCell = (header: any, currentHeaderId: string): boolean => {
+    if (!header) return false;
+    const firstLeafId = getFirstLeafId(header);
+    return currentHeaderId === firstLeafId;
+  };
+
   const renderTable = () => (
     <table {...getTableProps({ className: tableClassName })}>
       <thead>
@@ -421,7 +493,7 @@ export default typedMemo(function DataTable<D extends object>({
       )}
       {enableHorizontalMode && (
         <tbody {...getTableBodyProps()}>
-          {headerGroups[0].headers.map(header => (
+          {/* {headerGroups[0].headers.map(header => (
             <tr key={header.id} role="row">
               <th className="border border-slate-300 p-2 font-semibold bg-slate-100">
                 {header.render('Header')}
@@ -434,7 +506,65 @@ export default typedMemo(function DataTable<D extends object>({
                 return cell.render('Cell', { key: cell.column.id });
               })}
             </tr>
-          ))}
+          ))} */}
+          {headerGroups[headerGroups.length - 1].headers.map(
+            (header, rowIndex) => (
+              <tr key={header.id} role="row">
+                {/* Render cells for each depth level */}
+                {headerGroups.map((headerGroup, depth) => {
+                  const parentHeader = findParentAtDepth(
+                    header,
+                    headerGroup.headers,
+                  );
+
+                  if (shouldRenderCell(parentHeader, header.id)) {
+                    // Render actual header cell with rowSpan
+                    return (
+                      <th
+                        key={`depth-${depth}`}
+                        className="border border-slate-300 p-2 font-semibold bg-slate-100"
+                        rowSpan={getRowSpan(parentHeader)}
+                        style={{
+                          textAlign: 'center',
+                          verticalAlign: 'middle',
+                          fontWeight: 'bold',
+                          /* eslint-disable-next-line */
+                          border: '1px solid #ddd', // Border for clarity of grouping
+                          borderCollapse: 'collapse',
+                          // Add any other styles you want for group headers
+                        }}
+                      >
+                        {parentHeader?.render('Header')}
+                      </th>
+                    );
+                  }
+                  if (!isPartOfSpan(header, depth, headerGroups)) {
+                    // Render empty cell if not part of a rowSpan
+                    return (
+                      <th
+                        key={`depth-${depth}`}
+                        className="border border-slate-300 p-2"
+                        aria-hidden="true"
+                      />
+                    );
+                  }
+                  return null;
+                })}
+
+                {/* Leaf header and data cells remain the same */}
+                <th className="border border-slate-300 p-2 font-semibold bg-slate-100">
+                  {header.render('Header')}
+                </th>
+                {page.map(row => {
+                  prepareRow(row);
+                  const cell = row.cells.find(
+                    cell => cell.column.id === header.id,
+                  );
+                  return cell?.render('Cell', { key: cell.column.id });
+                })}
+              </tr>
+            ),
+          )}
         </tbody>
       )}
       {/* Render footer if shouldRenderFooter is true */}
