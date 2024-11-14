@@ -268,68 +268,138 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
             worksheet.set_column(i, i, 15)
 
 
-def addHorizontalTable(writer, df, formdata, start_row=0, **kwargs):
-    """
-    Transforms and writes DataFrame to Excel in a horizontal layout where original columns
-    become rows and rows become columns.
-    
-    Parameters:
-    - writer: ExcelWriter object
-    - df: DataFrame to transform
-    - formdata: Additional formatting data (if needed)
-    - start_row: Starting row for the table (default 0)
-    """
-    # Create a new sheet
+def addHorizontalTable(writer, df, queryContext, start_row=0, **kwargs):
     worksheet = writer.sheets['Sheet1'] if 'Sheet1' in writer.sheets else None
     workbook = writer.book
+    formdata = queryContext.form_data
     
     # Create formats
     header_format = workbook.add_format({
         'bold': True,
         'bg_color': '#F0F0F0',
         'border': 1,
-        'align': 'left'
+        'align': 'center',
+        'valign': 'vcenter'
     })
     
     cell_format = workbook.add_format({
         'border': 1,
         'align': 'left'
     })
-    
-    def safe_value(value):
-        """Handle NaN, Infinity, and other special values"""
-        import math
-        import numpy as np
-        
-        if isinstance(value, (float, np.floating)):
-            if math.isnan(value) or np.isnan(value):
-                return ''
-            if math.isinf(value) or np.isinf(value):
-                return 'Infinity' if value > 0 else '-Infinity'
-        return value
-    
-    # Write headers (column names) in the first column
-    for idx, col_name in enumerate(df.columns):
-        worksheet.write(start_row + idx + 1, 0, col_name, header_format)
-    
-    # Write data for each row as a column
-    for row_idx, (_, row_data) in enumerate(df.iterrows()):
-        col_position = row_idx + 1
-        # Write data values
-        for data_idx, value in enumerate(row_data):
-            safe_val = safe_value(value)
-            worksheet.write(start_row + data_idx + 1, col_position, safe_val, cell_format)
-    
-    # Auto-fit columns
-    for col in range(len(df.index) + 1):
-        max_length = 0
-        for row in range(len(df.columns)):
-            cell_value = worksheet.table[start_row + row + 1][col] if col == 0 else \
-                        str(df.iloc[row_idx, row] if row < len(df.columns) else '')
-            max_length = max(max_length, len(str(cell_value)))
-        worksheet.set_column(col, col, max_length + 2)
+    # Define the format for a hyperlink.
+    link_format = workbook.add_format({'font_color': 'blue', 'underline': True})
 
-    return start_row + len(df.columns) + 1  # Return next row position
+    # Get column groups from column_config
+    column_config = formdata.get('column_config', {})
+    grouped_columns = {}
+    merged_ranges = set()
+
+    # Parse column groups from formdata
+    for col, config in column_config.items():
+        if 'groups' in config and config['groups']:
+            groups = config['groups'].split(',')
+            current = grouped_columns
+            for group in groups:
+                group = group.strip()
+                if group not in current:
+                    current[group] = {}
+                current = current[group]
+            current[col] = None
+
+    # Calculate max header depth
+    if any('groups' in config and config['groups'] for config in column_config.values()):
+        max_depth = max(len(config['groups'].split(',')) for config in column_config.values() if 'groups' in config and config['groups'])
+    else:
+        max_depth = 0
+
+    current_row = start_row
+
+    # Build a map of groups for each column to track hierarchy
+    column_groups = {}
+    for col in df.columns:
+        config = column_config.get(col, {})
+        if 'groups' in config and config['groups']:
+            groups = [g.strip() for g in config['groups'].split(',')]
+            # For incomplete hierarchy, pad empty strings at the start, not middle
+            while len(groups) < max_depth:
+                groups.insert(0, '')  # Add empty strings at start
+            column_groups[col] = groups
+        else:
+            column_groups[col] = [''] * max_depth  # Empty groups for ungrouped columns
+
+    # Write data maintaining original DataFrame column order
+    for column in df.columns:
+        groups = column_groups[column]
+        
+        # Write groups
+        for depth, group in enumerate(groups):
+            if group:  # Only write and handle merging for non-empty groups
+                # Create a unique key for the group that includes its parent groups
+                group_key = tuple(groups[:depth + 1])  # Include all parent groups in the key
+                
+                # Check if we need to start a new merged range
+                if group_key not in merged_ranges:
+                    merged_ranges.add(group_key)
+                    # Find how many consecutive rows share this exact group hierarchy
+                    span_end = current_row
+                    for next_col in list(df.columns)[list(df.columns).index(column) + 1:]:
+                        next_groups = column_groups[next_col]
+                        # Compare entire group hierarchy up to this depth
+                        if next_groups[:depth + 1] == groups[:depth + 1]:
+                            span_end += 1
+                        else:
+                            break
+                    
+                    if span_end > current_row:
+                        worksheet.merge_range(current_row, depth, span_end, depth, group, header_format)
+                    else:
+                        worksheet.write(current_row, depth, group, header_format)
+            else:
+                worksheet.write(current_row, depth, '', header_format)
+
+        # Write column name
+        worksheet.write(current_row, max_depth, column, header_format)
+        df = table(df,formdata)
+        convert_html_links(df)
+        # Write data
+        for data_idx, value in enumerate(df[column]):
+            
+            if isinstance(value, tuple):
+                # Write the URL and display text
+                worksheet.write_url(current_row, max_depth + 1 + data_idx, value[0], string=value[1],cell_format=link_format)
+            else:
+                safe_val = safe_value(value)
+                worksheet.write(
+                    current_row,
+                    max_depth + 1 + data_idx,
+                    safe_val,
+                    cell_format
+                )
+        
+        current_row += 1
+
+    # Auto-fit columns
+    for col in range(max_depth + 1):
+        worksheet.set_column(col, col, 30)
+    for col in range(max_depth + 1, max_depth + 1 + len(df.columns)):
+        worksheet.set_column(col, col, 15)
+
+    return current_row
+
+
+def safe_value(value):
+    """Handle NaN, Infinity, and other special values"""
+    import math
+    import numpy as np
+    
+    if isinstance(value, (float, np.floating)):
+        if math.isnan(value) or np.isnan(value):
+            return ''
+        if math.isinf(value) or np.isinf(value):
+            return 'Infinity' if value > 0 else '-Infinity'
+    return value
+
+
 
 def addTablewithoutgrouping(writer, df, formdata, start_row=0,**kwargs):
     df.to_excel(writer,index=True, startrow=start_row+1, header=True, sheet_name='Sheet1')
@@ -361,7 +431,7 @@ def create_excel_for_dashboard(dataframes,**kwargs) -> Any:
                 start_row = add_header_or_markdown(worksheet, start_row, chart['markdown'], max_columns, markdown_format)
             if 'dataframe' in chart:
                 form_data = chart['query_context'].form_data
-                if(form_data.get('enableGrouping',False)):
+                if(form_data.get('enableGrouping',False) and (not form_data.get('enableHorizontalMode', False))):
                     add_dataframe_to_excel(writer,chart['dataframe'],chart['query_context'], start_row)
                 
                 elif form_data.get('enableHorizontalMode', False):
@@ -371,7 +441,7 @@ def create_excel_for_dashboard(dataframes,**kwargs) -> Any:
                         chart['dataframe'],
                         chart['query_context'],
                         start_row
-                    )
+                    ) + 1
                 else:
                     addTablewithoutgrouping(writer,chart['dataframe'],chart['query_context'], start_row)
                 # Update max_columns for horizontal mode differently
