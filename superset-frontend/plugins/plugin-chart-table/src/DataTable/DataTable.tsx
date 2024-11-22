@@ -69,6 +69,7 @@ export interface DataTableProps<D extends object> extends TableOptions<D> {
   rowCount: number;
   enableGrouping: boolean | undefined;
   enableHorizontalMode: boolean | undefined;
+  titleRow?: string;
   wrapperRef?: MutableRefObject<HTMLDivElement>;
   onColumnOrderChange: () => void;
   renderGroupingHeaders?: () => JSX.Element;
@@ -109,6 +110,7 @@ export default typedMemo(function DataTable<D extends object>({
   renderTimeComparisonDropdown,
   enableGrouping,
   enableHorizontalMode,
+  titleRow,
   ...moreUseTableOptions
 }: DataTableProps<D>): JSX.Element {
   const tableHooks: PluginHook<D>[] = [
@@ -430,6 +432,25 @@ export default typedMemo(function DataTable<D extends object>({
   const renderTable = () => (
     <table {...getTableProps({ className: tableClassName })}>
       <thead>
+        {titleRow && titleRow?.length > 0 && (
+          <tr>
+            <th
+              key={titleRow}
+              style={{
+                textAlign: 'center',
+                fontWeight: 'bold',
+                /* eslint-disable-next-line */
+                border: '1px solid #ddd', // Border for clarity of grouping
+                borderCollapse: 'collapse',
+                // Add any other styles you want for group headers
+              }}
+              // @ts-ignore
+              colSpan="100%"
+            >
+              {titleRow}
+            </th>
+          </tr>
+        )}
         {renderGroupingHeaders ? renderGroupingHeaders() : null}
         {/* {enableGrouping && renderHeaders(columns)} */}
         {!enableHorizontalMode &&

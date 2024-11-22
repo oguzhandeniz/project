@@ -339,6 +339,18 @@ const config: ControlPanelConfig = {
         ],
         [
           {
+            name: 'titleRow',
+            config: {
+              type: 'TextControl',
+              label: t('Title Row'),
+              default: '',
+
+              resetOnHide: false,
+            },
+          },
+        ],
+        [
+          {
             name: 'row_grouping_column',
             config: {
               type: 'SelectControl',

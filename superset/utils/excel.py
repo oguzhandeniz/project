@@ -424,6 +424,11 @@ def create_excel_for_dashboard(dataframes,**kwargs) -> Any:
             'valign': 'vcenter',
             'align': 'left'
         })
+        title_format = workbook.add_format({
+            'text_wrap': True,
+            'valign': 'vcenter',
+            'align': 'center'
+        })
         for chart in dataframes:
             if 'header' in chart:
                 start_row = add_header_or_markdown(worksheet, start_row, chart['header'], max_columns, header_format)
@@ -431,6 +436,20 @@ def create_excel_for_dashboard(dataframes,**kwargs) -> Any:
                 start_row = add_header_or_markdown(worksheet, start_row, chart['markdown'], max_columns, markdown_format)
             if 'dataframe' in chart:
                 form_data = chart['query_context'].form_data
+                titleRow = form_data.get('titleRow', False)
+                max_depth = calculate_max_depth(
+                        parse_grouped_columns(form_data.get('column_config', {}))
+                    )
+                # Update max_columns for horizontal mode differently
+                if form_data.get('enableHorizontalMode', False):
+                    # In horizontal mode, rows become columns
+                    max_columns = max(max_columns, len(chart['dataframe'].index) + max_depth)
+                else:
+                    max_columns = max(max_columns, len(chart['dataframe'].columns))
+                
+                if titleRow and len(titleRow)>0:
+                    add_header_or_markdown(worksheet,start_row,titleRow,max_columns,title_format)
+                    start_row +=1
                 if(form_data.get('enableGrouping',False) and (not form_data.get('enableHorizontalMode', False))):
                     add_dataframe_to_excel(writer,chart['dataframe'],chart['query_context'], start_row)
                 
@@ -444,37 +463,53 @@ def create_excel_for_dashboard(dataframes,**kwargs) -> Any:
                     ) + 1
                 else:
                     addTablewithoutgrouping(writer,chart['dataframe'],chart['query_context'], start_row)
-                # Update max_columns for horizontal mode differently
-                if form_data.get('enableHorizontalMode', False):
-                    # In horizontal mode, rows become columns
-                    max_columns = max(max_columns, len(chart['dataframe'].index) + 1)
-                else:
-                    max_columns = max(max_columns, len(chart['dataframe'].columns))
-                
+
                 # Only calculate additional row increment for non-horizontal mode
                 if not form_data.get('enableHorizontalMode', False):
-                    start_row += len(chart['dataframe']) + calculate_max_depth(
-                        parse_grouped_columns(form_data.get('column_config', {}))
-                    ) + 3
+                    start_row += len(chart['dataframe']) + max_depth + 3
     
     return output.getvalue()
 
 def create_excel_with_merged_headers(df, queryContext) -> Any:
     output = io.BytesIO()
+    
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         # Write the DataFrame starting after the headers, with borders
+        titleRow = queryContext.form_data.get('titleRow', False)
+        start_row = 0        
         if queryContext.form_data.get('enableHorizontalMode', False):
             # Add horizontal table layout
             workbook = writer.book
+            markdown_format = workbook.add_format({
+                'text_wrap': True,
+                'valign': 'vcenter',
+                'align': 'center'
+            })
+            max_depth = calculate_max_depth(
+                        parse_grouped_columns(queryContext.form_data.get('column_config', {}))
+                    )
             workbook.add_worksheet('Sheet1')
+            if titleRow and len(titleRow)>0:
+                add_header_or_markdown(writer.sheets['Sheet1'],start_row,titleRow,len(df.index)+max_depth,markdown_format)
+                start_row +=1
             addHorizontalTable(
                 writer,
                 df,
                 queryContext,
-                0
+                start_row
             )
         else:
-            add_dataframe_to_excel(writer, df, queryContext, 0)
+            if titleRow and len(titleRow)>0:
+                workbook = writer.book
+                workbook.add_worksheet('Sheet1')
+                markdown_format = workbook.add_format({
+                    'text_wrap': True,
+                    'valign': 'vcenter',
+                    'align': 'center'
+                })
+                add_header_or_markdown(writer.sheets['Sheet1'],start_row,titleRow,len(df.columns),markdown_format)
+                start_row +=1
+            add_dataframe_to_excel(writer, df, queryContext, start_row)
     return output.getvalue()
 
 
