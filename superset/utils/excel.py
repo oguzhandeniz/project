@@ -263,7 +263,7 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
     # Set column widths
     for i, column in enumerate(df.columns):
         if column in column_config and 'columnWidth' in column_config[column]:
-            worksheet.set_column(i, i, pixels_to_excel_width(column_config[column]['columnWidth']))
+            worksheet.set_column(i, i, pixels_to_excel_width(column_config[column]['columnWidth'] or 15))
         else:
             worksheet.set_column(i, i, 15)
 
@@ -427,7 +427,9 @@ def create_excel_for_dashboard(dataframes,**kwargs) -> Any:
         title_format = workbook.add_format({
             'text_wrap': True,
             'valign': 'vcenter',
-            'align': 'center'
+            'align': 'center',
+            'border': 1
+
         })
         for chart in dataframes:
             if 'header' in chart:
@@ -440,15 +442,18 @@ def create_excel_for_dashboard(dataframes,**kwargs) -> Any:
                 max_depth = calculate_max_depth(
                         parse_grouped_columns(form_data.get('column_config', {}))
                     )
+                data_width =0 
                 # Update max_columns for horizontal mode differently
                 if form_data.get('enableHorizontalMode', False):
                     # In horizontal mode, rows become columns
+                    data_width = len(chart['dataframe'].index) + max_depth + 1
                     max_columns = max(max_columns, len(chart['dataframe'].index) + max_depth)
                 else:
+                    data_width = len(chart['dataframe'].columns) + 1
                     max_columns = max(max_columns, len(chart['dataframe'].columns))
                 
                 if titleRow and len(titleRow)>0:
-                    add_header_or_markdown(worksheet,start_row,titleRow,max_columns,title_format)
+                    add_header_or_markdown(worksheet,start_row,titleRow,data_width,title_format)
                     start_row +=1
                 if(form_data.get('enableGrouping',False) and (not form_data.get('enableHorizontalMode', False))):
                     add_dataframe_to_excel(writer,chart['dataframe'],chart['query_context'], start_row)
@@ -483,14 +488,15 @@ def create_excel_with_merged_headers(df, queryContext) -> Any:
             markdown_format = workbook.add_format({
                 'text_wrap': True,
                 'valign': 'vcenter',
-                'align': 'center'
+                'align': 'center',
+                'border': 1
             })
             max_depth = calculate_max_depth(
                         parse_grouped_columns(queryContext.form_data.get('column_config', {}))
                     )
             workbook.add_worksheet('Sheet1')
             if titleRow and len(titleRow)>0:
-                add_header_or_markdown(writer.sheets['Sheet1'],start_row,titleRow,len(df.index)+max_depth,markdown_format)
+                add_header_or_markdown(writer.sheets['Sheet1'],start_row,titleRow,len(df.index)+max_depth+1,markdown_format)
                 start_row +=1
             addHorizontalTable(
                 writer,
@@ -507,7 +513,7 @@ def create_excel_with_merged_headers(df, queryContext) -> Any:
                     'valign': 'vcenter',
                     'align': 'center'
                 })
-                add_header_or_markdown(writer.sheets['Sheet1'],start_row,titleRow,len(df.columns),markdown_format)
+                add_header_or_markdown(writer.sheets['Sheet1'],start_row,titleRow,len(df.columns)+1,markdown_format)
                 start_row +=1
             add_dataframe_to_excel(writer, df, queryContext, start_row)
     return output.getvalue()

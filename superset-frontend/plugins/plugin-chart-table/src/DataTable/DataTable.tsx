@@ -559,7 +559,10 @@ export default typedMemo(function DataTable<D extends object>({
                       </th>
                     );
                   }
-                  if (!isPartOfSpan(header, depth, headerGroups)) {
+                  if (
+                    enableGrouping &&
+                    !isPartOfSpan(header, depth, headerGroups)
+                  ) {
                     // Render empty cell if not part of a rowSpan
                     return (
                       <th
