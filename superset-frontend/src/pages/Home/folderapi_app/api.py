@@ -257,6 +257,6 @@ def get_combined_data():
 #   uvicorn main:app --reload --port 7001  şeklinde de çalıştırabilirsiniz.
 # Aşağıdaki if bloğunu FastAPI'de genelde çok kullanmayız,
 # fakat yine de isterseniz ekleyebilirsiniz:
-#if __name__ == "__main__":
-#    import uvicorn
-#    uvicorn.run("main:app", host="0.0.0.0", port=7001, reload=True)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
