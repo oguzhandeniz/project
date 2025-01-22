@@ -1,0 +1,92 @@
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-image: linear-gradient(to right, #1cb5e0, #000046);
+}
+
+.app-header-title {
+  color: #000;
+  margin: 0 0 0 16px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.search-bar {
+  width: 200px;
+}
+
+.content-container {
+  padding: 0 48px;
+}
+
+.layout-content {
+  padding: 24px 0;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.sider-container {
+  background: #fff;
+  position: relative;
+}
+
+.content-inner {
+  padding: 0 24px;
+  min-height: 280px;
+}
+
+.footer {
+  text-align: center;
+}
+
+.resize-handle {
+  width: 5px;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  right: 0;
+  cursor: ew-resize;
+  z-index: 1;
+}
+
+.table-button {
+  background-color: #1890ff;
+  border-color: #1890ff;
+}
+
+.table-button:hover {
+  background-color: #ff4d4f;
+  border-color: #ff4d4f;
+}
+
+.table-button:active {
+  background-color: #ff7875;
+  border-color: #ff7875;
+}
+
+.custom-trigger {
+  color: #fff; /* Butonun metin rengi */
+  background-image: linear-gradient(
+    to right,
+    #1cb5e0,
+    #000046
+  ); /* Butonun arka plan gradyanı */
+  border: none; /* Butonun kenarlığını kaldır */
+}
+
+.custom-trigger:hover {
+  background-image: linear-gradient(
+    to right,
+    #1cb5e0,
+    #000046
+  ); /* Hover durumunda da aynı gradyanı kullan */
+}
+
+.custom-trigger:active {
+  background-image: linear-gradient(
+    to right,
+    #1cb5e0,
+    #000046
+  ); /* Aktif durumunda da aynı gradyanı kullan */
+}

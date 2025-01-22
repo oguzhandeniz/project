@@ -1,3 +1,11 @@
+import logging
+import os
+
+from celery.schedules import crontab
+from flask_caching.backends.filesystemcache import FileSystemCache
+
+logger = logging.getLogger()
+
 # Superset specific config
 ROW_LIMIT = 50000000
 DISPLAY_MAX_ROW = 50000000  # Adjust this value as needed
@@ -26,6 +34,7 @@ SECRET_KEY = 'qownE2UVpjNmVkq6+ITlTPnd1RL+RUP+/k0KT71xEKjKGvv3tlAQvXoy'
 # to enforce single-threaded access, which may be problematic in some edge cases
 SQLALCHEMY_DATABASE_URI = 'postgresql+psycopg2://Onur.Simsek:NVJzH6JSp371Nea@10.34.211.50:5432/superset'
 
+
 # Flask-WTF flag for CSRF
 WTF_CSRF_ENABLED = True
 # Add endpoints that need to be exempt from CSRF protection
@@ -42,14 +51,79 @@ APP_ICON = "/static/assets/images/logo.png"
 HORIZONTAL_FILTER_BAR: True
 ALLOW_FULL_CSV_EXPORT: True
 DYNAMIC_PLUGINS: True
-ALERT_REPORTS: True
 ENABLE_TEMPLATE_PROCESSING = True
 ALERT_REPORTS_NOTIFICATION_DRY_RUN = False
 
 
+FEATURE_FLAGS = {
+    "ALERT_REPORTS": True
+}
+
+REDIS_HOST = "superset_cache"
+REDIS_PORT = "6379"
+
+class CeleryConfig:
+    broker_url = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+    imports = (
+        "superset.sql_lab",
+        "superset.tasks.scheduler",
+    )
+    result_backend = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+    worker_prefetch_multiplier = 10
+    task_acks_late = True
+    task_annotations = {
+        "sql_lab.get_sql_results": {
+            "rate_limit": "100/s",
+        },
+    }
+    beat_schedule = {
+        "reports.scheduler": {
+            "task": "reports.scheduler",
+            "schedule": crontab(minute="*", hour="*"),
+        },
+        "reports.prune_log": {
+            "task": "reports.prune_log",
+            "schedule": crontab(minute=0, hour=0),
+        },
+    }
+CELERY_CONFIG = CeleryConfig
+
+SCREENSHOT_LOCATE_WAIT = 100
+SCREENSHOT_LOAD_WAIT = 600
+
+SLACK_API_TOKEN = "xoxb-"
 
 
-from cachelib.redis import RedisCache
+# Email configuration
+SMTP_HOST = "10.34.125.31"
+SMTP_PORT = 587
+SMTP_STARTTLS = True
+SMTP_SSL_SERVER_AUTH = True # If your using an SMTP server with a valid certificate
+SMTP_SSL = False
+SMTP_USER = "yemvars@smtp.dedas.com.tr"
+SMTP_PASSWORD = "11=N1pM=@xo8AkH]"
+SMTP_MAIL_FROM = "yemvars@smtp.dedas.com.tr"
+
+
+# WebDriver configuration
+# If you use Firefox, you can stick with default values
+# If you use Chrome, then add the following WEBDRIVER_TYPE and WEBDRIVER_OPTION_ARGS
+WEBDRIVER_TYPE = "chrome"
+WEBDRIVER_OPTION_ARGS = [
+    "--force-device-scale-factor=2.0",
+    "--high-dpi-support=2.0",
+    "--headless",
+    "--disable-gpu",
+    "--disable-dev-shm-usage",
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-extensions",
+]
+
+WEBDRIVER_BASEURL = "http://0.0.0.0:8080/"
+WEBDRIVER_BASEURL_USER_FRIENDLY = "http://0.0.0.0:8080/"
+
+from flask_caching.backends.rediscache import RedisCache
 
 # Redis URL: redis://:password@host:port/db
 # Örneğin localhost'ta 6379, parola yok, DB 0
@@ -67,4 +141,13 @@ CACHE_CONFIG = {
     'PORT': 6379,
     'DB': 1,  # hangi DB'yi kullanacağınız
     'PASSWORD': '',  # eğer parola yoksa boş
+}
+
+
+ENABLE_CORS = True
+CORS_OPTIONS = {
+    'supports_credentials': True,
+    'allow_headers': ['*'],
+    'resources': ['*'],
+    'origins': ['http://10.34.211.143:8000', 'http://10.34.211.143:8001', 'http://10.34.211.143:8000/menu_items'],  # Add your allowed origins here
 }

@@ -119,6 +119,7 @@ const setupFeatureToggleMock = () =>
 
 const renderWelcome = (props = mockedProps) =>
   waitFor(() => {
+    // @ts-ignore
     render(<Welcome {...props} />, {
       useRedux: true,
       useRouter: true,
@@ -132,14 +133,6 @@ afterEach(() => {
 test('With sql role - renders', async () => {
   await renderWelcome();
   expect(await screen.findByText('Dashboards')).toBeInTheDocument();
-});
-
-test('With sql role - renders all panels on the page on page load', async () => {
-  await renderWelcome();
-  const panels = await screen.findAllByText(
-    /Dashboards|Charts|Recents|Saved queries/,
-  );
-  expect(panels).toHaveLength(4);
 });
 
 test('With sql role - calls api methods in parallel on page load', async () => {

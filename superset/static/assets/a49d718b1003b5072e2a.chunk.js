@@ -1,0 +1,15 @@
+"use strict";(globalThis.webpackChunksuperset=globalThis.webpackChunksuperset||[]).push([[5336],{90335:(e,t,a)=>{var r,o,l,i;a.d(t,{Z9:()=>o,bx:()=>i,cv:()=>r}),function(e){e.Email="Email",e.Slack="Slack",e.SlackV2="SlackV2"}(r||(r={})),function(e){e.Success="Success",e.Working="Working",e.Error="Error",e.Noop="Not triggered",e.Grace="On Grace"}(o||(o={})),function(e){e.Email="Email",e.Slack="Slack",e.SlackV2="SlackV2"}(l||(l={})),function(e){e.General="generalSection",e.Content="contentSection",e.Alert="alertConditionSection",e.Schedule="scheduleSection",e.Notification="notificationSection"}(i||(i={}))},58883:(e,t,a)=>{a.r(t),a.d(t,{default:()=>D});var r=a(51995),o=a(11965),l=a(61988),i=a(30381),n=a.n(i),s=a(67294),c=a(16550),d=a(73727),u=a(93139),g=a(58593),m=a(86074),h=a(14114),p=a(44814),S=a(94222),f=a(34858),k=a(35944);const w=r.iK.div`
+  ${({theme:e})=>o.iv`
+    display: flex;
+    flex-direction: row;
+
+    a,
+    Link {
+      margin-left: ${4*e.gridUnit}px;
+      font-size: ${e.typography.sizes.s};
+      font-weight: ${e.typography.weights.normal};
+      text-decoration: underline;
+    }
+  `}
+`,D=(0,h.ZP)((function({addDangerToast:e,addSuccessToast:t,isReportEnabled:a}){const{alertId:r}=(0,c.UO)(),{state:{loading:o,resourceCount:i,resourceCollection:h},fetchData:D}=(0,f.Yi)(`report/${r}/log`,(0,l.t)("log"),e,!1),{state:{loading:C,resource:E},fetchResource:Z}=(0,f.LE)("report",(0,l.t)("reports"),e);(0,s.useEffect)((()=>{null===r||C||Z(r)}),[r]);const b=(0,s.useMemo)((()=>[{Cell:({row:{original:{state:e}}})=>(0,k.tZ)(S.Z,{state:e,isReportEnabled:a}),accessor:"state",Header:(0,l.t)("State"),size:"xs",disableSortBy:!0},{Cell:({row:{original:{uuid:e}}})=>e?e.slice(0,6):"none",accessor:"uuid",Header:(0,l.t)("Execution ID"),size:"xs",disableSortBy:!0},{Cell:({row:{original:{scheduled_dttm:e}}})=>n()(new Date(e)).format("YYYY-MM-DD hh:mm:ss a"),accessor:"scheduled_dttm",Header:(0,l.t)("Scheduled at (UTC)")},{Cell:({row:{original:{start_dttm:e}}})=>n()(new Date(e)).format("YYYY-MM-DD hh:mm:ss a"),Header:(0,l.t)("Start at (UTC)"),accessor:"start_dttm"},{Cell:({row:{original:{start_dttm:e,end_dttm:t}}})=>(0,p.zQ)(new Date(e).getTime(),new Date(t).getTime()),Header:(0,l.t)("Duration"),disableSortBy:!0},{accessor:"value",Header:(0,l.t)("Value")},{accessor:"error_message",Header:(0,l.t)("Error message"),Cell:({row:{original:{error_message:e=""}}})=>(0,k.tZ)(g.u,{title:e,placement:"topLeft",children:(0,k.tZ)("span",{children:e})})}]),[a]),y=`/${a?"report":"alert"}/list/`,T=(0,l.t)("Alert"),Y=(0,l.t)("Report");return(0,k.BX)(k.HY,{children:[(0,k.tZ)(m.Z,{name:(0,k.BX)(w,{children:[(0,k.BX)("span",{children:[E?"Alert"===E.type?`${T}:`:"Report"===E.type?`${Y}:`:null:null," ",null==E?void 0:E.name]}),(0,k.tZ)("span",{children:(0,k.tZ)(d.rU,{to:y,children:(0,l.t)("Back to all")})})]})}),(0,k.tZ)(u.Z,{className:"execution-log-list-view",columns:b,count:i,data:h,fetchData:D,initialSort:[{id:"start_dttm",desc:!0}],loading:o,addDangerToast:e,addSuccessToast:t,refreshData:()=>{},pageSize:25})]})}))}}]);
+//# sourceMappingURL=a49d718b1003b5072e2a.chunk.js.map

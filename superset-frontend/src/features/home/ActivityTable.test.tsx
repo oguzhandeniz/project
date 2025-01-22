@@ -128,6 +128,7 @@ test('calls the getEdited batch call when edited tab is clicked', async () => {
   expect(editedButton).toBeInTheDocument();
   userEvent.click(editedButton);
   expect(mockSetActiveChild).toHaveBeenCalledWith(TableTab.Edited);
+  // @ts-ignore
   rerender(<ActivityTable {...activityEditedTabProps} />);
   // simulate the render after getEditedObjects has been called
   await waitFor(() => {

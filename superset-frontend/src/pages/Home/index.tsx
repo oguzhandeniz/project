@@ -1,440 +1,432 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *   http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
-import { useEffect, useMemo, useState } from 'react';
-import {
-  isFeatureEnabled,
-  FeatureFlag,
-  getExtensionsRegistry,
-  JsonObject,
-  styled,
-  t,
-} from '@superset-ui/core';
-import rison from 'rison';
-import Collapse from 'src/components/Collapse';
-import { User } from 'src/types/bootstrapTypes';
-import { reject } from 'lodash';
-import {
-  dangerouslyGetItemDoNotUse,
-  dangerouslySetItemDoNotUse,
-  getItem,
-  LocalStorageKeys,
-  setItem,
-} from 'src/utils/localStorageHelpers';
-import ListViewCard from 'src/components/ListViewCard';
-import withToasts from 'src/components/MessageToasts/withToasts';
-import {
-  CardContainer,
-  createErrorHandler,
-  getRecentActivityObjs,
-  getUserOwnedObjects,
-  loadingCardCount,
-  mq,
-} from 'src/views/CRUD/utils';
-import { AntdSwitch } from 'src/components';
-import getBootstrapData from 'src/utils/getBootstrapData';
-import { TableTab } from 'src/views/CRUD/types';
-import SubMenu, { SubMenuProps } from 'src/features/home/SubMenu';
-import { userHasPermission } from 'src/dashboard/util/permissionUtils';
-import { WelcomePageLastTab } from 'src/features/home/types';
-import ActivityTable from 'src/features/home/ActivityTable';
-import ChartTable from 'src/features/home/ChartTable';
-import SavedQueries from 'src/features/home/SavedQueries';
-import DashboardTable from 'src/features/home/DashboardTable';
+import { FC, useState, useEffect, useCallback } from 'react';
+import { FolderOpenOutlined } from '@ant-design/icons';
+import { Layout, Menu, ConfigProvider, Table, Button, Spin, Input } from 'antd';
+import 'antd/dist/antd.css';
+import './App.css';
 
-const extensionsRegistry = getExtensionsRegistry();
+const { Header, Content, Footer, Sider } = Layout;
+const { Search } = Input;
 
-interface WelcomeProps {
-  user: User;
-  addDangerToast: (arg0: string) => void;
+/** --------------------------
+ *  API veri modelleri
+ * -------------------------- */
+interface RoleResponse {
+  result: {
+    roles: {
+      [roleName: string]: any[]; // "Admin": [ [ 'can_list','Dashboard' ], ... ]
+    };
+    // diğer alanlar
+  };
 }
 
+interface CombinedItem {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  dashboard_id: number | null;
+  // Roller
+  roles: {
+    role_id: number;
+    role_name: string;
+  }[];
+  // Dashboard bilgisi (null => klasör, yoksa rapor)
+  dashboard_info: DashboardInfo | null;
+  // Alt menü için
+  children?: CombinedItem[];
+}
+
+interface DashboardInfo {
+  id: number;
+  url: string;
+  dashboard_title: string;
+  changed_on_utc: string;
+  created_by: {
+    first_name: string;
+    id: number;
+    last_name: string;
+  };
+}
+
+// ActivityData arayüzü
 export interface ActivityData {
-  [TableTab.Created]?: JsonObject[];
-  [TableTab.Edited]?: JsonObject[];
-  [TableTab.Viewed]?: JsonObject[];
-  [TableTab.Other]?: JsonObject[];
+  id: string;
+  name: string;
+  Viewed: {
+    slice_name: string;
+    changed_on_utc: string;
+    url: string;
+    id: string;
+    table: {};
+  }[];
+  Created: {
+    dashboard_title: string;
+    changed_on_utc: string;
+    url: string;
+    id: string;
+  }[];
 }
 
-interface LoadingProps {
-  cover?: boolean;
-}
+// LoadingCards bileşeni
+export const LoadingCards: React.FC<{ cover?: boolean }> = ({ cover }) =>
+  cover ? <div>Loading with cover...</div> : <div>Loading...</div>;
 
-const DEFAULT_TAB_ARR = ['2', '3'];
-
-const WelcomeContainer = styled.div`
-  background-color: ${({ theme }) => theme.colors.grayscale.light4};
-  .ant-row.menu {
-    margin-top: -15px;
-    background-color: ${({ theme }) => theme.colors.grayscale.light4};
-    &:after {
-      content: '';
-      display: block;
-      border: 1px solid ${({ theme }) => theme.colors.grayscale.light2};
-      margin: 0px ${({ theme }) => theme.gridUnit * 6}px;
-      position: relative;
-      width: 100%;
-      ${mq[1]} {
-        margin-top: 5px;
-        margin: 0px 2px;
-      }
-    }
-    .ant-menu.ant-menu-light.ant-menu-root.ant-menu-horizontal {
-      padding-left: ${({ theme }) => theme.gridUnit * 8}px;
-    }
-    button {
-      padding: 3px 21px;
-    }
-  }
-  .ant-card-meta-description {
-    margin-top: ${({ theme }) => theme.gridUnit}px;
-  }
-  .ant-card.ant-card-bordered {
-    border: 1px solid ${({ theme }) => theme.colors.grayscale.light2};
-  }
-  .ant-collapse-item .ant-collapse-content {
-    margin-bottom: ${({ theme }) => theme.gridUnit * -6}px;
-  }
-  div.ant-collapse-item:last-child.ant-collapse-item-active
-    .ant-collapse-header {
-    padding-bottom: ${({ theme }) => theme.gridUnit * 3}px;
-  }
-  div.ant-collapse-item:last-child .ant-collapse-header {
-    padding-bottom: ${({ theme }) => theme.gridUnit * 9}px;
-  }
-  .loading-cards {
-    margin-top: ${({ theme }) => theme.gridUnit * 8}px;
-    .ant-card-cover > div {
-      height: 168px;
-    }
-  }
-`;
-
-const WelcomeNav = styled.div`
-  ${({ theme }) => `
-    .switch {
-      display: flex;
-      flex-direction: row;
-      margin: ${theme.gridUnit * 4}px;
-      span {
-        display: block;
-        margin: ${theme.gridUnit}px;
-        line-height: ${theme.gridUnit * 3.5}px;
-      }
-    }
-  `}
-`;
-
-const bootstrapData = getBootstrapData();
-
-export const LoadingCards = ({ cover }: LoadingProps) => (
-  <CardContainer showThumbnails={cover} className="loading-cards">
-    {[...new Array(loadingCardCount)].map((_, index) => (
-      <ListViewCard
-        key={index}
-        cover={cover ? false : <></>}
-        description=""
-        loading
-      />
-    ))}
-  </CardContainer>
-);
-
-function Welcome({ user, addDangerToast }: WelcomeProps) {
-  const canReadSavedQueries = userHasPermission(user, 'SavedQuery', 'can_read');
-  const userid = user.userId;
-  const id = userid!.toString(); // confident that user is not a guest user
-  const params = rison.encode({ page_size: 6 });
-  const recent = `/api/v1/log/recent_activity/?q=${params}`;
-  const [activeChild, setActiveChild] = useState('Loading');
-  const userKey = dangerouslyGetItemDoNotUse(id, null);
-  let defaultChecked = false;
-  const isThumbnailsEnabled = isFeatureEnabled(FeatureFlag.Thumbnails);
-  if (isThumbnailsEnabled) {
-    defaultChecked =
-      userKey?.thumbnails === undefined ? true : userKey?.thumbnails;
-  }
-  const [checked, setChecked] = useState(defaultChecked);
-  const [activityData, setActivityData] = useState<ActivityData | null>(null);
-  const [chartData, setChartData] = useState<Array<object> | null>(null);
-  const [queryData, setQueryData] = useState<Array<object> | null>(null);
-  const [dashboardData, setDashboardData] = useState<Array<object> | null>(
-    null,
+/** --------------------------
+ *  Ana Bileşen
+ * -------------------------- */
+const App: FC = () => {
+  const [combinedData, setCombinedData] = useState<CombinedItem[]>([]);
+  const [tableData, setTableData] = useState<CombinedItem[]>([]);
+  const [filteredTableData, setFilteredTableData] = useState<CombinedItem[]>(
+    [],
   );
-  const [isFetchingActivityData, setIsFetchingActivityData] = useState(true);
+  const [menuItems, setMenuItems] = useState<React.ReactNode[]>([]);
+  const [collapsed, setCollapsed] = useState(false);
+  const [siderWidth, setSiderWidth] = useState(200);
+  const [loading, setLoading] = useState(true);
 
-  const collapseState = getItem(LocalStorageKeys.HomepageCollapseState, []);
-  const [activeState, setActiveState] = useState<Array<string>>(collapseState);
-
-  const handleCollapse = (state: Array<string>) => {
-    setActiveState(state);
-    setItem(LocalStorageKeys.HomepageCollapseState, state);
+  /** Kullanıcı rollerini API'den çek */
+  const fetchUserRoles = async (): Promise<string[]> => {
+    try {
+      const resp = await fetch(`http://10.34.211.143/api/v1/me/roles/`, {
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+      const data = (await resp.json()) as RoleResponse;
+      // data.result.roles => { "Admin": [ [...], ... ], "Gamma": [... ] }
+      // Keyler role isimleri
+      return Object.keys(data.result.roles); // örn: ["Admin","Gamma"]
+    } catch (error) {
+      console.error('Error fetching roles:', error);
+      return [];
+    }
   };
 
-  const SubmenuExtension = extensionsRegistry.get('home.submenu');
-  const WelcomeMessageExtension = extensionsRegistry.get('welcome.message');
-  const WelcomeTopExtension = extensionsRegistry.get('welcome.banner');
-  const WelcomeMainExtension = extensionsRegistry.get(
-    'welcome.main.replacement',
-  );
-
-  const [otherTabTitle, otherTabFilters] = useMemo(() => {
-    const lastTab = bootstrapData.common?.conf
-      .WELCOME_PAGE_LAST_TAB as WelcomePageLastTab;
-    const [customTitle, customFilter] = Array.isArray(lastTab)
-      ? lastTab
-      : [undefined, undefined];
-    if (customTitle && customFilter) {
-      return [t(customTitle), customFilter];
-    }
-    if (lastTab === 'all') {
-      return [t('All'), []];
-    }
-    return [
-      t('Examples'),
-      [
-        {
-          col: 'created_by',
-          opr: 'rel_o_m',
-          value: 0,
+  /** combined_data'yı API'den çek */
+  const fetchCombinedData = async (): Promise<CombinedItem[]> => {
+    try {
+      const response = await fetch(`http://10.34.211.143:8000/combined_data`, {
+        headers: {
+          Accept: 'application/json',
         },
-      ],
-    ];
-  }, []);
+      });
+      return (await response.json()) as CombinedItem[];
+    } catch (error) {
+      console.error('Error fetching combined_data:', error);
+      return [];
+    }
+  };
 
-  useEffect(() => {
-    if (!otherTabFilters || WelcomeMainExtension) {
+  /**
+   * Roller ile menüyü/raporları filtrele:
+   * - Admin => tüm item'lar
+   * - Aksi takdirde, item.roles boş veya userRoles ile intersect ise item görünür
+   */
+  const filterItemsByRoles = (
+    items: CombinedItem[],
+    userRoles: string[],
+  ): CombinedItem[] => {
+    // 1) Kullanıcı Admin ise her şeyi görsün
+    if (userRoles.includes('Admin')) {
+      return items;
+    }
+
+    // 2) Admin değilse => Rolleri boş olan item’lar görünmesin
+    //    => Yalnızca item.roles dizisi userRoles ile kesişiyorsa görünsün
+    return items.filter(item => {
+      // Eğer item.roles.length === 0 ise false (gösterme)
+      if (item.roles.length === 0) {
+        return false;
+      }
+      // Aksi takdirde kesişim var mı
+      return item.roles.some(r => userRoles.includes(r.role_name));
+    });
+  };
+
+  /** parent/child ilişkisine göre ağaç kur */
+  const buildMenuTree = (items: CombinedItem[]): CombinedItem[] => {
+    const map = new Map<number, CombinedItem>();
+    items.forEach(it => map.set(it.id, it));
+
+    items.forEach(it => {
+      if (it.parent_id !== null) {
+        const parent = map.get(it.parent_id);
+        if (parent) {
+          if (!parent.children) parent.children = [];
+          parent.children.push(it);
+        }
+      }
+    });
+
+    // root item'lar
+    return items.filter(it => it.parent_id === null);
+  };
+
+  /** Menüde item'a tıklayınca (klasör ya da rapor) ne olacak? */
+  const handleMenuClick = (clickedItem: CombinedItem) => {
+    // Dashboard varsa rapora git
+    if (clickedItem.dashboard_info) {
+      window.open(clickedItem.dashboard_info.url, '_blank');
       return;
     }
-    const activeTab = getItem(LocalStorageKeys.HomepageActivityFilter, null);
-    setActiveState(collapseState.length > 0 ? collapseState : DEFAULT_TAB_ARR);
-    getRecentActivityObjs(user.userId!, recent, addDangerToast, otherTabFilters)
-      .then(res => {
-        const data: ActivityData | null = {};
-        data[TableTab.Other] = res.other;
-        if (res.viewed) {
-          const filtered = reject(res.viewed, ['item_url', null]).map(r => r);
-          data[TableTab.Viewed] = filtered;
-          if (!activeTab && data[TableTab.Viewed]) {
-            setActiveChild(TableTab.Viewed);
-          } else if (!activeTab && !data[TableTab.Viewed]) {
-            setActiveChild(TableTab.Created);
-          } else setActiveChild(activeTab || TableTab.Created);
-        } else if (!activeTab) setActiveChild(TableTab.Created);
-        else setActiveChild(activeTab);
-        setActivityData(activityData => ({ ...activityData, ...data }));
-      })
-      .catch(
-        createErrorHandler((errMsg: unknown) => {
-          setActivityData(activityData => ({
-            ...activityData,
-            [TableTab.Viewed]: [],
-          }));
-          addDangerToast(
-            t('There was an issue fetching your recent activity: %s', errMsg),
-          );
-        }),
+    // Klasör: tabloda altındaki dashboardları göster
+    if (clickedItem.children && clickedItem.children.length > 0) {
+      const childDashboards = clickedItem.children.filter(
+        c => c.dashboard_info !== null,
       );
+      setFilteredTableData(childDashboards);
+    } else {
+      setFilteredTableData([]);
+    }
+  };
 
-    // Sets other activity data in parallel with recents api call
-    const ownSavedQueryFilters = [
-      {
-        col: 'created_by',
-        opr: 'rel_o_m',
-        value: `${id}`,
-      },
-    ];
-    Promise.all([
-      getUserOwnedObjects(id, 'dashboard')
-        .then(r => {
-          setDashboardData(r);
-          return Promise.resolve();
-        })
-        .catch((err: unknown) => {
-          setDashboardData([]);
-          addDangerToast(
-            t('There was an issue fetching your dashboards: %s', err),
-          );
-          return Promise.resolve();
-        }),
-      getUserOwnedObjects(id, 'chart')
-        .then(r => {
-          setChartData(r);
-          return Promise.resolve();
-        })
-        .catch((err: unknown) => {
-          setChartData([]);
-          addDangerToast(t('There was an issue fetching your chart: %s', err));
-          return Promise.resolve();
-        }),
-      canReadSavedQueries
-        ? getUserOwnedObjects(id, 'saved_query', ownSavedQueryFilters)
-            .then(r => {
-              setQueryData(r);
-              return Promise.resolve();
-            })
-            .catch((err: unknown) => {
-              setQueryData([]);
-              addDangerToast(
-                t('There was an issue fetching your saved queries: %s', err),
-              );
-              return Promise.resolve();
-            })
-        : Promise.resolve(),
-    ]).then(() => {
-      setIsFetchingActivityData(false);
+  /**
+   * Ağaç şeklinde menü (çok seviyeli) oluşturma:
+   * - children varsa SubMenu
+   * - yoksa Menu.Item
+   */
+  const renderMenu = (items: CombinedItem[]): React.ReactNode[] =>
+    items.map(item => {
+      if (item.children && item.children.length > 0) {
+        return (
+          <Menu.SubMenu
+            key={item.id}
+            title={item.name}
+            icon={<FolderOpenOutlined />}
+            onTitleClick={() => handleMenuClick(item)}
+          >
+            {renderMenu(item.children)}
+          </Menu.SubMenu>
+        );
+      }
+      // alt yoksa => rapor
+      return (
+        <Menu.Item
+          key={item.id}
+          icon={<FolderOpenOutlined />}
+          onClick={() => handleMenuClick(item)}
+        >
+          {item.name}
+        </Menu.Item>
+      );
     });
-  }, [otherTabFilters]);
 
-  const handleToggle = () => {
-    setChecked(!checked);
-    dangerouslySetItemDoNotUse(id, { thumbnails: !checked });
-  };
-
-  useEffect(() => {
-    if (!collapseState && queryData?.length) {
-      setActiveState(activeState => [...activeState, '4']);
-    }
-    setActivityData(activityData => ({
-      ...activityData,
-      Created: [
-        ...(chartData?.slice(0, 3) || []),
-        ...(dashboardData?.slice(0, 3) || []),
-        ...(queryData?.slice(0, 3) || []),
-      ],
-    }));
-  }, [chartData, queryData, dashboardData]);
-
-  useEffect(() => {
-    if (!collapseState && activityData?.[TableTab.Viewed]?.length) {
-      setActiveState(activeState => ['1', ...activeState]);
-    }
-  }, [activityData]);
-
-  const isRecentActivityLoading =
-    !activityData?.[TableTab.Other] && !activityData?.[TableTab.Viewed];
-
-  const menuData: SubMenuProps = {
-    activeChild: 'Home',
-    name: t('Home'),
-  };
-
-  if (isThumbnailsEnabled) {
-    menuData.buttons = [
-      {
-        name: (
-          <WelcomeNav>
-            <div className="switch">
-              <AntdSwitch checked={checked} onClick={handleToggle} />
-              <span>{t('Thumbnails')}</span>
-            </div>
-          </WelcomeNav>
-        ),
-        onClick: handleToggle,
-        buttonStyle: 'link',
+  /** Tablodaki kolonlar */
+  const columns = [
+    {
+      title: 'Name',
+      dataIndex: 'dashboard_info',
+      key: 'dashboard_title',
+      render: (info: DashboardInfo, record: CombinedItem) =>
+        info ? info.dashboard_title : record.name,
+    },
+    {
+      title: 'Folder',
+      key: 'folder',
+      render: (_: unknown, record: CombinedItem) => {
+        if (!record.parent_id) return '';
+        const parent = combinedData.find(cd => cd.id === record.parent_id);
+        return parent ? parent.name : '';
       },
-    ];
-  }
+    },
+    {
+      title: 'Last Modified',
+      dataIndex: ['dashboard_info', 'changed_on_utc'],
+      key: 'changed_on_utc',
+      render: (text: string) => {
+        if (!text) return '';
+        const date = new Date(text);
+        date.setMinutes(date.getMinutes() - 10);
+        const formattedDate = date.toLocaleDateString('en-GB', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+        });
+        const formattedTime = date.toLocaleTimeString('en-GB', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
+        return `${formattedDate} ${formattedTime}`;
+      },
+    },
+    {
+      title: 'Creator',
+      key: 'creator',
+      render: (_: unknown, record: CombinedItem) => {
+        const c = record.dashboard_info?.created_by;
+        return c ? `${c.first_name} ${c.last_name}` : '';
+      },
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_: unknown, record: CombinedItem) => {
+        if (!record.dashboard_info) return null;
+        const dashUrl = record.dashboard_info.url;
+        return (
+          <Button type="primary" onClick={() => window.open(dashUrl, '_blank')}>
+            Rapor'a Git
+          </Button>
+        );
+      },
+    },
+  ];
+
+  /** Arama */
+  const handleSearch = (value: string) => {
+    const lowerVal = value.toLowerCase();
+    const filtered = tableData.filter(item => {
+      if (item.name.toLowerCase().includes(lowerVal)) return true;
+      if (
+        item.dashboard_info?.dashboard_title.toLowerCase().includes(lowerVal)
+      ) {
+        return true;
+      }
+      return false;
+    });
+    setFilteredTableData(filtered);
+  };
+
+  /** "All Dashboards" */
+  const handleAllDashboardsClick = () => {
+    setFilteredTableData(tableData);
+  };
+
+  /** Sider genişliği (drag) */
+  const handleMouseDown = (e: React.MouseEvent) => {
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    const newWidth = e.clientX;
+    if (newWidth > 100 && newWidth < 600) {
+      setSiderWidth(newWidth);
+    }
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+  }, [handleMouseMove]);
+
+  useEffect(
+    () => () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    },
+    [handleMouseMove, handleMouseUp],
+  );
+
+  /** useEffect: veriyi çekip, rollere göre filtreleyip, menü & tablo oluştur */
+  useEffect(() => {
+    const init = async () => {
+      setLoading(true);
+      try {
+        // 1) Kullanıcı rollerini al
+        const roles = await fetchUserRoles(); // ["Admin"] vb.
+
+        // 2) Tüm item'ları al
+        const allData = await fetchCombinedData();
+
+        // 3) Rollere göre filtrele
+        //    Admin ise her şeyi görür; değilse, kesişen roller varsa göster
+        const filteredData = filterItemsByRoles(allData, roles);
+
+        // 4) Tabloda sadece dashboard_info != null item'lar
+        const dashboards = filteredData.filter(
+          it => it.dashboard_info !== null,
+        );
+        setTableData(dashboards);
+        setFilteredTableData(dashboards);
+
+        // 5) Menü hiyerarşisi
+        const menuTree = buildMenuTree(filteredData);
+
+        // 6) "All Dashboards" + alt menü
+        const finalMenu = [
+          <Menu.Item
+            key="all_dashboards"
+            icon={<FolderOpenOutlined />}
+            onClick={handleAllDashboardsClick}
+          >
+            All Dashboards
+          </Menu.Item>,
+          ...renderMenu(menuTree),
+        ];
+        setMenuItems(finalMenu);
+
+        setCombinedData(filteredData);
+      } catch (error) {
+        console.error('Error in init:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    init();
+  }, []);
 
   return (
-    <>
-      {SubmenuExtension ? (
-        <SubmenuExtension {...menuData} />
-      ) : (
-        <SubMenu {...menuData} />
-      )}
-      <WelcomeContainer>
-        {WelcomeMessageExtension && <WelcomeMessageExtension />}
-        {WelcomeTopExtension && <WelcomeTopExtension />}
-        {WelcomeMainExtension && <WelcomeMainExtension />}
-        {(!WelcomeTopExtension || !WelcomeMainExtension) && (
-          <>
-            <Collapse
-              activeKey={activeState}
-              onChange={handleCollapse}
-              ghost
-              bigger
-            >
-              <Collapse.Panel header={t('Recents')} key="1">
-                {activityData &&
-                (activityData[TableTab.Viewed] ||
-                  activityData[TableTab.Other] ||
-                  activityData[TableTab.Created]) &&
-                activeChild !== 'Loading' ? (
-                  <ActivityTable
-                    user={{ userId: user.userId! }} // user is definitely not a guest user on this page
-                    activeChild={activeChild}
-                    setActiveChild={setActiveChild}
-                    activityData={activityData}
-                    isFetchingActivityData={isFetchingActivityData}
-                  />
-                ) : (
-                  <LoadingCards />
-                )}
-              </Collapse.Panel>
-              <Collapse.Panel header={t('Dashboards')} key="2">
-                {!dashboardData || isRecentActivityLoading ? (
-                  <LoadingCards cover={checked} />
-                ) : (
-                  <DashboardTable
-                    user={user}
-                    mine={dashboardData}
-                    showThumbnails={checked}
-                    otherTabData={activityData?.[TableTab.Other]}
-                    otherTabFilters={otherTabFilters}
-                    otherTabTitle={otherTabTitle}
-                  />
-                )}
-              </Collapse.Panel>
-              <Collapse.Panel header={t('Charts')} key="3">
-                {!chartData || isRecentActivityLoading ? (
-                  <LoadingCards cover={checked} />
-                ) : (
-                  <ChartTable
-                    showThumbnails={checked}
-                    user={user}
-                    mine={chartData}
-                    otherTabData={activityData?.[TableTab.Other]}
-                    otherTabFilters={otherTabFilters}
-                    otherTabTitle={otherTabTitle}
-                  />
-                )}
-              </Collapse.Panel>
-              {canReadSavedQueries && (
-                <Collapse.Panel header={t('Saved queries')} key="4">
-                  {!queryData ? (
-                    <LoadingCards cover={checked} />
-                  ) : (
-                    <SavedQueries
-                      showThumbnails={checked}
-                      user={user}
-                      mine={queryData}
-                      featureFlag={isThumbnailsEnabled}
-                    />
-                  )}
-                </Collapse.Panel>
-              )}
-            </Collapse>
-          </>
-        )}
-      </WelcomeContainer>
-    </>
-  );
-}
+    <ConfigProvider>
+      <Layout>
+        <Header className="app-header">
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <h2 className="app-header-title">Folders</h2>
+          </div>
+          <Search
+            placeholder="Arama"
+            onSearch={handleSearch}
+            className="search-bar"
+          />
+        </Header>
 
-export default withToasts(Welcome);
+        <Content className="content-container">
+          <Layout className="layout-content">
+            <Sider
+              className="sider-container"
+              width={siderWidth}
+              collapsible
+              collapsed={collapsed}
+              onCollapse={val => setCollapsed(val)}
+              trigger={
+                <div className="custom-trigger">{collapsed ? '>' : '<'}</div>
+              }
+            >
+              <Menu
+                mode="inline"
+                defaultSelectedKeys={['all_dashboards']}
+                style={{ height: '100%' }}
+              >
+                {menuItems}
+              </Menu>
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label="Resize handle"
+                className="resize-handle"
+                onMouseDown={handleMouseDown}
+              />
+            </Sider>
+
+            <Content className="content-inner">
+              <Spin spinning={loading}>
+                <Table
+                  dataSource={filteredTableData}
+                  columns={columns}
+                  rowKey="id"
+                />
+              </Spin>
+            </Content>
+          </Layout>
+        </Content>
+
+        <Footer className="footer">
+          BIAnalytics ©{new Date().getFullYear()}
+        </Footer>
+      </Layout>
+    </ConfigProvider>
+  );
+};
+
+export default App;

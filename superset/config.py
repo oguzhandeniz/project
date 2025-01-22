@@ -783,8 +783,14 @@ EXPLORE_FORM_DATA_CACHE_CONFIG: CacheConfig = {
 STORE_CACHE_KEYS_IN_METADATA_DB = False
 
 # CORS Options
-ENABLE_CORS = False
-CORS_OPTIONS: dict[Any, Any] = {}
+# CORS Options
+ENABLE_CORS = True
+CORS_OPTIONS = {
+    'supports_credentials': True,
+    'allow_headers': ['*'],
+    'resources': ['*'],
+    'origins': ['http://10.34.211.143:8000', 'http://10.34.211.143:8001'],  # Add your allowed origins here
+}
 
 # Sanitizes the HTML content used in markdowns to allow its rendering in a safe manner.
 # Disabling this option is not recommended for security reasons. If you wish to allow
@@ -1020,8 +1026,8 @@ CELERY_CONFIG: type[CeleryConfig] = CeleryConfig
 # OVERRIDE_HTTP_HEADERS: sets override values for HTTP headers. These values will
 # override anything set within the app
 DEFAULT_HTTP_HEADERS: dict[str, Any] = {}
-OVERRIDE_HTTP_HEADERS: dict[str, Any] = {}
-HTTP_HEADERS: dict[str, Any] = {}
+OVERRIDE_HTTP_HEADERS = {"X-Frame-Options": "ALLOWALL"}
+HTTP_HEADERS = {"X-Frame-Options": "ALLOWALL"}
 
 # The db id here results in selecting this one as a default in SQL Lab
 DEFAULT_DB_ID = None
@@ -1201,6 +1207,7 @@ FAB_ADD_SECURITY_VIEWS = True
 FAB_ADD_SECURITY_PERMISSION_VIEW = False
 FAB_ADD_SECURITY_VIEW_MENU_VIEW = False
 FAB_ADD_SECURITY_PERMISSION_VIEWS_VIEW = False
+FAB_ADD_SECURITY_API = True
 
 # The link to a page containing common errors and their resolutions
 # It will be appended at the bottom of sql_lab errors.
@@ -1556,6 +1563,8 @@ TALISMAN_CONFIG = {
             "'self'",
             "https://api.mapbox.com",
             "https://events.mapbox.com",
+            "http://10.34.211.143:8000",
+            "http://10.34.211.143:8000/menu_items",
         ],
         "object-src": "'none'",
         "style-src": [
@@ -1586,6 +1595,8 @@ TALISMAN_DEV_CONFIG = {
             "'self'",
             "https://api.mapbox.com",
             "https://events.mapbox.com",
+            "http://10.34.211.143:8000",
+            "http://10.34.211.143:8000/menu_items",
         ],
         "object-src": "'none'",
         "style-src": [
