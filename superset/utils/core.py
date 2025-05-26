@@ -1725,27 +1725,22 @@ def parse_boolean_string(bool_str: str | None) -> bool:
 
 def apply_max_row_limit(
     limit: int,
+    *,                     # <- only-keyword param
+    server_pagination: bool | None = None,      # <- EKLENDİ
     max_limit: int | None = None,
 ) -> int:
     """
-    Override row limit if max global limit is defined
-
-    :param limit: requested row limit
-    :param max_limit: Maximum allowed row limit
-    :return: Capped row limit
-
-    >>> apply_max_row_limit(100000, 10)
-    10
-    >>> apply_max_row_limit(10, 100000)
-    10
-    >>> apply_max_row_limit(0, 10000)
-    10000
+    Override row limit based on server pagination setting
     """
-    if max_limit is None:
-        max_limit = current_app.config["SQL_MAX_ROW"]
-    if limit != 0:
-        return min(max_limit, limit)
-    return max_limit
+    # Varsayılan üst limit – pagination’a göre seç
+    max_limit = (
+        current_app.config["TABLE_VIZ_MAX_ROW_SERVER"]
+        if server_pagination
+        else current_app.config["SQL_MAX_ROW"]
+    ) if max_limit is None else max_limit
+
+    # 0 → sınırsız; yoksa min(limit, max_limit)
+    return max_limit if limit == 0 else min(max_limit, limit)
 
 
 def create_zip(files: dict[str, Any]) -> BytesIO:

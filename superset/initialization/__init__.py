@@ -235,6 +235,8 @@ class SupersetAppInitializer:  # pylint: disable=too-many-public-methods
             cond=lambda: bool(appbuilder.app.config["LOGO_TARGET_PATH"]),
         )
 
+        appbuilder.add_link("Home",href="/superset/welcome/",category="")
+
         appbuilder.add_view(
             DatabaseView,
             "Databases",

@@ -1,5 +1,6 @@
+/* eslint-disable no-await-in-loop */
 import { FC, useState, useEffect, useCallback } from 'react';
-import { FolderOpenOutlined } from '@ant-design/icons';
+import { FolderOpenOutlined, FileTextOutlined } from '@ant-design/icons';
 import { Layout, Menu, ConfigProvider, Table, Button, Spin, Input } from 'antd';
 import 'antd/dist/antd.css';
 import './App.css';
@@ -13,9 +14,8 @@ const { Search } = Input;
 interface RoleResponse {
   result: {
     roles: {
-      [roleName: string]: any[]; // "Admin": [ [ 'can_list','Dashboard' ], ... ]
+      [roleName: string]: any[];
     };
-    // diğer alanlar
   };
 }
 
@@ -24,14 +24,11 @@ interface CombinedItem {
   name: string;
   parent_id: number | null;
   dashboard_id: number | null;
-  // Roller
   roles: {
     role_id: number;
     role_name: string;
   }[];
-  // Dashboard bilgisi (null => klasör, yoksa rapor)
   dashboard_info: DashboardInfo | null;
-  // Alt menü için
   children?: CombinedItem[];
 }
 
@@ -84,66 +81,93 @@ const App: FC = () => {
   const [siderWidth, setSiderWidth] = useState(200);
   const [loading, setLoading] = useState(true);
 
-  /** Kullanıcı rollerini API'den çek */
+  /**
+   * 1) Kullanıcı rollerini çek (sadece birkaç endpoint deniyoruz).
+   * Başarılı ilk cevabı döner, hata alırsa bir sonrakini dener.
+   */
   const fetchUserRoles = async (): Promise<string[]> => {
-    try {
-      const resp = await fetch(`http://10.34.211.143/api/v1/me/roles/`, {
-        headers: {
-          Accept: 'application/json',
-        },
-      });
-      const data = (await resp.json()) as RoleResponse;
-      // data.result.roles => { "Admin": [ [...], ... ], "Gamma": [... ] }
-      // Keyler role isimleri
-      return Object.keys(data.result.roles); // örn: ["Admin","Gamma"]
-    } catch (error) {
-      console.error('Error fetching roles:', error);
-      return [];
+    const endpoints = [
+      'http://yemvars-edvars.dedas.com.tr/api/v1/me/roles/',
+      'http://iszekasi.dedas.com.tr/api/v1/me/roles/',
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        const resp = await fetch(endpoint, {
+          headers: { Accept: 'application/json' },
+        });
+        if (!resp.ok) {
+          throw new Error(`Sunucu ${endpoint} hata döndürdü: ${resp.status}`);
+        }
+        const data = (await resp.json()) as RoleResponse;
+        return Object.keys(data.result.roles);
+      } catch (error) {
+        // Bir sonraki endpoint'i denemek üzere devam ediyoruz
+      }
     }
+
+    // Tümü başarısız olursa:
+    console.error('Tüm sunuculardan da yanıt alınamadı (fetchUserRoles)');
+    return [];
   };
 
-  /** combined_data'yı API'den çek */
+  /**
+   * 2) combined_data'yı sırasıyla birkaç IP'den deneyecek şekilde çek.
+   */
   const fetchCombinedData = async (): Promise<CombinedItem[]> => {
-    try {
-      const response = await fetch(`http://10.34.211.143:8000/combined_data`, {
-        headers: {
-          Accept: 'application/json',
-        },
-      });
-      return (await response.json()) as CombinedItem[];
-    } catch (error) {
-      console.error('Error fetching combined_data:', error);
-      return [];
+    const endpoints = [
+      'http://10.34.200.200:8005/combined_data',
+      'http://10.34.200.201:8005/combined_data',
+      'http://10.34.200.202:8005/combined_data',
+      'http://10.34.200.203:8005/combined_data',
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        const response = await fetch(endpoint, {
+          headers: { Accept: 'application/json' },
+        });
+        if (!response.ok) {
+          throw new Error(
+            `Sunucu ${endpoint} hata döndürdü: ${response.status}`,
+          );
+        }
+        return (await response.json()) as CombinedItem[];
+      } catch (error) {
+        // Bir sonraki endpoint'i denemek üzere devam
+      }
     }
+
+    console.error('combined_data için de tüm sunuculardan yanıt alınamadı');
+    return [];
   };
 
   /**
    * Roller ile menüyü/raporları filtrele:
    * - Admin => tüm item'lar
-   * - Aksi takdirde, item.roles boş veya userRoles ile intersect ise item görünür
+   * - Admin değilse, item.roles boş mu kontrol et (boş olanları gösterme)
+   *   ya da userRoles ile intersect var mı?
    */
   const filterItemsByRoles = (
     items: CombinedItem[],
     userRoles: string[],
   ): CombinedItem[] => {
-    // 1) Kullanıcı Admin ise her şeyi görsün
     if (userRoles.includes('Admin')) {
       return items;
     }
-
-    // 2) Admin değilse => Rolleri boş olan item’lar görünmesin
-    //    => Yalnızca item.roles dizisi userRoles ile kesişiyorsa görünsün
     return items.filter(item => {
-      // Eğer item.roles.length === 0 ise false (gösterme)
+      // Eğer item.roles tamamen boş ise bu raporu gizliyoruz
       if (item.roles.length === 0) {
         return false;
       }
-      // Aksi takdirde kesişim var mı
+      // Aksi halde en az bir eşleşen role var mı diye kontrol ediyoruz
       return item.roles.some(r => userRoles.includes(r.role_name));
     });
   };
 
-  /** parent/child ilişkisine göre ağaç kur */
+  /**
+   * parent/child ilişkisine göre ağaç yapısı kur.
+   */
   const buildMenuTree = (items: CombinedItem[]): CombinedItem[] => {
     const map = new Map<number, CombinedItem>();
     items.forEach(it => map.set(it.id, it));
@@ -158,36 +182,58 @@ const App: FC = () => {
       }
     });
 
-    // root item'lar
+    // root item'lar:
     return items.filter(it => it.parent_id === null);
   };
 
-  /** Menüde item'a tıklayınca (klasör ya da rapor) ne olacak? */
-  const handleMenuClick = (clickedItem: CombinedItem) => {
-    // Dashboard varsa rapora git
-    if (clickedItem.dashboard_info) {
-      window.open(clickedItem.dashboard_info.url, '_blank');
-      return;
+  /**
+   * Bir klasör (menu item) tıklandığında, o klasörün ALT AĞACINDAKİ tüm raporları bulup döndürür
+   */
+  const getAllDashboardsInSubtree = (item: CombinedItem): CombinedItem[] => {
+    let result: CombinedItem[] = [];
+
+    // Eğer item bir dashboard ise ekliyoruz
+    if (item.dashboard_info) {
+      result.push(item);
     }
-    // Klasör: tabloda altındaki dashboardları göster
-    if (clickedItem.children && clickedItem.children.length > 0) {
-      const childDashboards = clickedItem.children.filter(
-        c => c.dashboard_info !== null,
-      );
-      setFilteredTableData(childDashboards);
+
+    // alt children var ise recursive ekle
+    if (item.children) {
+      item.children.forEach(child => {
+        result = result.concat(getAllDashboardsInSubtree(child));
+      });
+    }
+    return result;
+  };
+
+  /**
+   * Menüde item'a tıklayınca (klasör ya da rapor) ne olacak?
+   *  - Dashboard link'i varsa yeni sekmede aç.
+   *  - Klasör ise altındaki (ve alt klasörlerin de) dashboard'ları tabloya at.
+   */
+  const handleMenuClick = (clickedItem: CombinedItem) => {
+    if (clickedItem.dashboard_info) {
+      // Dashboard link'i
+      window.open(clickedItem.dashboard_info.url, '_blank');
     } else {
-      setFilteredTableData([]);
+      // Klasör -> alt klasörlerdeki tüm raporları topla
+      const dashboards = getAllDashboardsInSubtree(clickedItem);
+      setFilteredTableData(dashboards);
     }
   };
 
   /**
-   * Ağaç şeklinde menü (çok seviyeli) oluşturma:
-   * - children varsa SubMenu
-   * - yoksa Menu.Item
+   * Menü ağaç yapısını render et (v4 tarzı).
+   * - Folder: FolderOpenOutlined
+   * - Dashboard: FileTextOutlined
+   * SubMenu'nun title'ına tıklayınca handleMenuClick
    */
   const renderMenu = (items: CombinedItem[]): React.ReactNode[] =>
     items.map(item => {
+      // Eğer item.dashboard_info === null => "Folder" => SubMenu veya Menu.Item (ama folder)
+      // Eğer item.dashboard_info !== null => "Dashboard"
       if (item.children && item.children.length > 0) {
+        // Klasör + alt children
         return (
           <Menu.SubMenu
             key={item.id}
@@ -199,11 +245,17 @@ const App: FC = () => {
           </Menu.SubMenu>
         );
       }
-      // alt yoksa => rapor
+      // Tekil bir dashboard (veya folder ama children yok?)
+      const icon = item.dashboard_info ? (
+        <FileTextOutlined />
+      ) : (
+        <FolderOpenOutlined />
+      );
+
       return (
         <Menu.Item
           key={item.id}
-          icon={<FolderOpenOutlined />}
+          icon={icon}
           onClick={() => handleMenuClick(item)}
         >
           {item.name}
@@ -236,18 +288,15 @@ const App: FC = () => {
       render: (text: string) => {
         if (!text) return '';
         const date = new Date(text);
-        date.setMinutes(date.getMinutes() - 10);
-        const formattedDate = date.toLocaleDateString('en-GB', {
+        return `${date.toLocaleDateString('en-GB', {
           day: '2-digit',
           month: '2-digit',
           year: 'numeric',
-        });
-        const formattedTime = date.toLocaleTimeString('en-GB', {
+        })} ${date.toLocaleTimeString('en-GB', {
           hour: '2-digit',
           minute: '2-digit',
           second: '2-digit',
-        });
-        return `${formattedDate} ${formattedTime}`;
+        })}`;
       },
     },
     {
@@ -277,6 +326,7 @@ const App: FC = () => {
   const handleSearch = (value: string) => {
     const lowerVal = value.toLowerCase();
     const filtered = tableData.filter(item => {
+      // Hem name içinde hem de dashboard_title içinde arama yapıyoruz
       if (item.name.toLowerCase().includes(lowerVal)) return true;
       if (
         item.dashboard_info?.dashboard_title.toLowerCase().includes(lowerVal)
@@ -286,11 +336,6 @@ const App: FC = () => {
       return false;
     });
     setFilteredTableData(filtered);
-  };
-
-  /** "All Dashboards" */
-  const handleAllDashboardsClick = () => {
-    setFilteredTableData(tableData);
   };
 
   /** Sider genişliği (drag) */
@@ -319,42 +364,35 @@ const App: FC = () => {
     [handleMouseMove, handleMouseUp],
   );
 
-  /** useEffect: veriyi çekip, rollere göre filtreleyip, menü & tablo oluştur */
+  /**
+   * useEffect: veriyi çek
+   *  - Roller
+   *  - combined_data
+   * paralel olarak istek atıyoruz
+   */
   useEffect(() => {
     const init = async () => {
       setLoading(true);
       try {
-        // 1) Kullanıcı rollerini al
-        const roles = await fetchUserRoles(); // ["Admin"] vb.
+        // Roller ve tüm item'lar paralel çekiliyor:
+        const [roles, allData] = await Promise.all([
+          fetchUserRoles(),
+          fetchCombinedData(),
+        ]);
 
-        // 2) Tüm item'ları al
-        const allData = await fetchCombinedData();
-
-        // 3) Rollere göre filtrele
-        //    Admin ise her şeyi görür; değilse, kesişen roller varsa göster
+        // Rollere göre filtrele:
         const filteredData = filterItemsByRoles(allData, roles);
 
-        // 4) Tabloda sadece dashboard_info != null item'lar
+        // Sadece dashboard_info != null olanlar tabloya
         const dashboards = filteredData.filter(
           it => it.dashboard_info !== null,
         );
         setTableData(dashboards);
         setFilteredTableData(dashboards);
 
-        // 5) Menü hiyerarşisi
+        // Menü hiyerarşisi:
         const menuTree = buildMenuTree(filteredData);
-
-        // 6) "All Dashboards" + alt menü
-        const finalMenu = [
-          <Menu.Item
-            key="all_dashboards"
-            icon={<FolderOpenOutlined />}
-            onClick={handleAllDashboardsClick}
-          >
-            All Dashboards
-          </Menu.Item>,
-          ...renderMenu(menuTree),
-        ];
+        const finalMenu = renderMenu(menuTree);
         setMenuItems(finalMenu);
 
         setCombinedData(filteredData);
@@ -393,13 +431,28 @@ const App: FC = () => {
                 <div className="custom-trigger">{collapsed ? '>' : '<'}</div>
               }
             >
+              {/* v4 tarzında Menu kullanımı */}
               <Menu
                 mode="inline"
-                defaultSelectedKeys={['all_dashboards']}
+                defaultSelectedKeys={['all_reports']}
                 style={{ height: '100%' }}
               >
-                {menuItems}
+                <Menu.Item
+                  key="all_reports"
+                  icon={<FolderOpenOutlined />}
+                  onClick={() => {
+                    // Tüm dashboard'ları tabloya getir
+                    setFilteredTableData(tableData);
+                  }}
+                >
+                  All Reports
+                </Menu.Item>
+
+                <Menu.ItemGroup key="folders" title="Folders">
+                  {menuItems}
+                </Menu.ItemGroup>
               </Menu>
+
               <div
                 role="button"
                 tabIndex={0}
@@ -428,5 +481,6 @@ const App: FC = () => {
     </ConfigProvider>
   );
 };
+/* eslint-enable no-await-in-loop */
 
 export default App;

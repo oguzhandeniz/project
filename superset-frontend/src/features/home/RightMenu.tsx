@@ -516,6 +516,17 @@ const RightMenu = ({
                   <a href={navbarRight.user_info_url}>{t('Info')}</a>
                 </Menu.Item>
               )}
+              {isAdmin && (
+                <Menu.Item key="admin-panel">
+                  <a
+                    href="http://10.34.200.200:3000/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {t('Admin Panel')}
+                  </a>
+                </Menu.Item>
+              )}
               <Menu.Item key="logout" onClick={handleLogout}>
                 <a href={navbarRight.user_logout_url}>{t('Logout')}</a>
               </Menu.Item>

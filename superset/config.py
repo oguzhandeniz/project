@@ -42,7 +42,7 @@ import click
 import pkg_resources
 from celery.schedules import crontab
 from flask import Blueprint
-from flask_appbuilder.security.manager import AUTH_DB
+from flask_appbuilder.security.manager import AUTH_DB,AUTH_LDAP
 from flask_caching.backends.base import BaseCache
 from pandas import Series
 from pandas._libs.parsers import STR_NA_VALUES
@@ -63,6 +63,8 @@ from superset.utils.core import is_test, NO_TIME_RANGE, parse_boolean_string
 from superset.utils.encrypt import SQLAlchemyUtilsAdapter
 from superset.utils.log import DBEventLogger
 from superset.utils.logging_configurator import DefaultLoggingConfigurator
+
+from superset.custom_security_manager import CustomSecurityManager
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +169,7 @@ DEFAULT_TIME_FILTER = NO_TIME_RANGE
 # [load balancer / proxy / envoy / kong / ...] timeout settings.
 # You should also make sure to configure your WSGI server
 # (gunicorn, nginx, apache, ...) timeout setting to be <= to this setting
-SUPERSET_WEBSERVER_TIMEOUT = int(timedelta(minutes=10).total_seconds())
+SUPERSET_WEBSERVER_TIMEOUT = int(timedelta(minutes=20).total_seconds())
 
 # this 2 settings are used by dashboard period force refresh feature
 # When user choose auto force refresh frequency
@@ -178,7 +180,7 @@ SUPERSET_DASHBOARD_PERIODICAL_REFRESH_LIMIT = 0
 SUPERSET_DASHBOARD_PERIODICAL_REFRESH_WARNING_MESSAGE = None
 
 SUPERSET_DASHBOARD_POSITION_DATA_LIMIT = 65535
-CUSTOM_SECURITY_MANAGER = None
+CUSTOM_SECURITY_MANAGER = CustomSecurityManager
 SQLALCHEMY_TRACK_MODIFICATIONS = False
 # ---------------------------------------------------------
 
@@ -328,7 +330,31 @@ FAB_API_SWAGGER_UI = True
 # AUTH_DB : Is for database (username/password)
 # AUTH_LDAP : Is for LDAP
 # AUTH_REMOTE_USER : Is for using REMOTE_USER from web server
-AUTH_TYPE = AUTH_DB
+AUTH_TYPE = AUTH_LDAP
+AUTH_LDAP_SERVER = "ldap://10.34.13.123:389"  # LDAP sunucusunun IP adresi ve portu
+AUTH_LDAP_USE_TLS = False  # TLS kullanmıyorsanız False olarak bırakın
+
+# Kayıt yapılandırmaları
+AUTH_USER_REGISTRATION = True  # FAB veritabanında olmayan kullanıcıların kayıt olmasına izin ver
+AUTH_USER_REGISTRATION_ROLE = "Public"  # Yeni kayıtlı kullanıcılara atanacak varsayılan rol
+AUTH_LDAP_FIRSTNAME_FIELD = "givenName"  # LDAP'deki ilk isim alanı
+AUTH_LDAP_LASTNAME_FIELD = "sn"  # LDAP'deki soyisim alanı
+AUTH_LDAP_EMAIL_FIELD = "mail"  # E-posta alanı (LDAP'de boşsa, "{username}@email.notfound" olarak atanır)
+AUTH_API_LOGIN_ALLOW_MULTIPLE_PROVIDERS = True
+
+# Bind kullanıcı adı (parola doğrulama için)
+# AUTH_LDAP_USERNAME_FORMAT = "uid=%s,ou=users,dc=dedas,dc=local"  # %s sağlanan kullanıcı adıyla değiştirilir
+AUTH_LDAP_APPEND_DOMAIN = "dedas.local"  # Bind kullanıcı adları bu şekilde olacaktır: {USERNAME}@dedas.local
+
+# Arama yapılandırmaları
+AUTH_LDAP_SEARCH = "dc=dedas,dc=local"  # LDAP arama tabanı
+AUTH_LDAP_UID_FIELD = "sAMAccountName"  # Kullanıcı adı alanı (Active Directory için genellikle sAMAccountName kullanılır)
+
+AUTH_ROLES_MAPPING = {
+    "OU=USERS,OU=DIYARBAKIR,DC=dedas,DC=local": ["Public"],  # Diyarbakır'daki USERS birimindekilere Gamma rolü
+    "OU=USERS,OU=BATMAN,DC=dedas,DC=local": ["Public"],  # Batman'daki USERS birimindekilere Alpha rolü
+    "OU=DISABLED,DC=dedas,DC=local": ["NoAccess"],  # Disabled birimindekilere NoAccess rolü
+}
 
 # Uncomment to setup Full admin role name
 # AUTH_ROLE_ADMIN = 'Admin'
@@ -789,7 +815,7 @@ CORS_OPTIONS = {
     'supports_credentials': True,
     'allow_headers': ['*'],
     'resources': ['*'],
-    'origins': ['http://10.34.211.143:8000', 'http://10.34.211.143:8001'],  # Add your allowed origins here
+    'origins': ['http://10.34.200.200:8005', 'http://10.34.200.200:8006'],  # Add your allowed origins here
 }
 
 # Sanitizes the HTML content used in markdowns to allow its rendering in a safe manner.
@@ -843,7 +869,11 @@ CSV_UPLOAD_MAX_SIZE = None
 # CSV Options: key/value pairs that will be passed as argument to DataFrame.to_csv
 # method.
 # note: index option should not be overridden
-CSV_EXPORT = {"encoding": "utf-8"}
+CSV_EXPORT = {
+    "encoding": "utf-8",
+    "sep": ";",
+    "decimal": ","
+}
 
 # Excel Options: key/value pairs that will be passed as argument to DataFrame.to_excel
 # method.
@@ -1033,7 +1063,7 @@ HTTP_HEADERS = {"X-Frame-Options": "ALLOWALL"}
 DEFAULT_DB_ID = None
 
 # Timeout duration for SQL Lab synchronous queries
-SQLLAB_TIMEOUT = int(timedelta(seconds=30).total_seconds())
+SQLLAB_TIMEOUT = int(timedelta(seconds=1200).total_seconds())
 
 # Timeout duration for SQL Lab query validation
 SQLLAB_VALIDATION_TIMEOUT = int(timedelta(seconds=10).total_seconds())
@@ -1432,6 +1462,9 @@ SLACK_PROXY = None
 # domains in your TALISMAN_CONFIG
 SLACK_ENABLE_AVATARS = False
 
+TABLE_VIZ_MAX_ROW_SERVER = 500000000
+
+
 # The webdriver to use for generating reports. Use one of the following
 # firefox
 #   Requires: geckodriver and firefox installations
@@ -1439,7 +1472,7 @@ SLACK_ENABLE_AVATARS = False
 # chrome:
 #   Requires: headless chrome
 #   Limitations: unable to generate screenshots of elements
-WEBDRIVER_TYPE = "firefox"
+WEBDRIVER_TYPE = "chorme"
 
 # Window size - this will impact the rendering of the data
 WEBDRIVER_WINDOW = {
@@ -1563,8 +1596,17 @@ TALISMAN_CONFIG = {
             "'self'",
             "https://api.mapbox.com",
             "https://events.mapbox.com",
-            "http://10.34.211.143:8000",
-            "http://10.34.211.143:8000/menu_items",
+            "http://10.34.200.200:8005",
+            "http://10.34.200.200:8005/menu_items",
+            "http://10.34.200.200",
+            "http://10.34.200.201",
+            "http://10.34.200.202",
+            "http://10.34.200.203",
+            "http://10.34.200.201:8005",
+            "http://10.34.200.202:8005",
+            "http://10.34.200.203:8005",
+            "http://10.34.200.200:8005/combined_data"
+
         ],
         "object-src": "'none'",
         "style-src": [
@@ -1595,8 +1637,8 @@ TALISMAN_DEV_CONFIG = {
             "'self'",
             "https://api.mapbox.com",
             "https://events.mapbox.com",
-            "http://10.34.211.143:8000",
-            "http://10.34.211.143:8000/menu_items",
+            "http://10.34.200.200:8005",
+            "http://10.34.200.200:8005/menu_items",
         ],
         "object-src": "'none'",
         "style-src": [
@@ -1618,7 +1660,8 @@ TALISMAN_DEV_CONFIG = {
 #
 SESSION_COOKIE_HTTPONLY = True  # Prevent cookie from being read by frontend JS?
 SESSION_COOKIE_SECURE = False  # Prevent cookie from being transmitted over non-tls?
-SESSION_COOKIE_SAMESITE: Literal["None", "Lax", "Strict"] | None = "Lax"
+#SESSION_COOKIE_SAMESITE: Literal["None", "Lax", "Strict"] | None = "Lax"
+SESSION_COOKIE_SAMESITE = 'Lax'
 # Whether to use server side sessions from flask-session or Flask secure cookies
 SESSION_SERVER_SIDE = False
 # Example config using Redis as the backend for server side sessions

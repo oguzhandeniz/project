@@ -32,6 +32,7 @@ from flask_babel import gettext, ngettext
 from marshmallow import ValidationError
 from werkzeug.wrappers import Response as WerkzeugResponse
 from werkzeug.wsgi import FileWrapper
+from werkzeug.utils import secure_filename
 
 from superset import db, is_feature_enabled, thumbnail_cache
 from superset.charts.post_processing import pivot_table_v2
@@ -1010,7 +1011,11 @@ class DashboardRestApi(BaseSupersetModelRestApi):
           except KeyError as ex:
             raise ValidationError("Request is incorrect") from ex
         excel = create_excel_for_dashboard(chartsToGenerate)
-        return XlsxResponse(excel, headers=generate_download_headers("xlsx"))
+        dashboard = self.datamodel.get(pk)
+        filename = dashboard.dashboard_title or "dashboard"
+        # Sanitize the filename
+        filename = secure_filename(filename)
+        return XlsxResponse(excel, headers=generate_download_headers("xlsx", filename=filename))
       except ValidationError as error:
         return self.response_400(message=error.messages)
 

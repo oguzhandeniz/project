@@ -1,22 +1,3 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *
- *   http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
-
 import { SupersetClient } from '@superset-ui/core';
 import { Menu } from 'src/components/Menu';
 import { RootState } from 'src/dashboard/types';
@@ -40,18 +21,53 @@ export default function DownloadAsExcel({
   const anchor = useSelector(
     (state: RootState) => last(state.dashboardState.activeTabs) || undefined,
   );
-  const charts = useSelector((state: RootState) => state.charts || undefined);
+  const charts = useSelector((state: RootState) => state.charts || {});
   const layout = useSelector(
-    (state: RootState) => state.dashboardLayout?.present || undefined,
+    (state: RootState) => state.dashboardLayout?.present || {},
   );
 
+  /** Aktif TAB altındaki tüm chartId’leri döner */
+  const getActiveTabChartIds = (tabId: string | undefined) => {
+    // Sekme yoksa (tab’siz dashboard) tüm chart’lar geçerli
+    if (!tabId) return Object.keys(charts);
+
+    const result: string[] = [];
+    const queue: string[] = [tabId];
+
+    while (queue.length) {
+      const nodeId = queue.pop()!;
+      const node = layout[nodeId];
+      if (!node) continue;
+
+      if (node.type === 'CHART' && node.meta?.chartId != null) {
+        result.push(String(node.meta.chartId));
+      }
+
+      if (Array.isArray(node.children) && node.children.length) {
+        queue.push(...node.children);
+      }
+    }
+    return result;
+  };
+
   const onDownloadExcel = () => {
-    const chartPayloads = {};
-    for (const chart in charts) {
-      const vizType = charts[chart].form_data?.viz_type;
-      if (vizType === 'table' || vizType === 'pivot_table_v2') {
-        chartPayloads[chart] = buildV1ChartDataPayload({
-          formData: charts[chart].latestQueryFormData,
+    const chartPayloads: Record<string, object> = {};
+
+    // Sadece aktif sekmedeki chart ID’lerini dolaş
+    const validChartIds = new Set(getActiveTabChartIds(anchor));
+
+    for (const chartId of validChartIds) {
+      const formData = charts[chartId]?.latestQueryFormData;
+      if (!formData) continue;
+
+      const vizType = formData.viz_type;
+      if (
+        (vizType === 'table' || vizType === 'pivot_table_v2') &&
+        typeof formData.datasource === 'string' &&
+        formData.datasource.includes('__')
+      ) {
+        chartPayloads[chartId] = buildV1ChartDataPayload({
+          formData,
           resultFormat: 'xlsx',
           resultType: vizType === 'pivot_table_v2' ? 'post_processed' : 'full',
           force: false,
@@ -60,6 +76,9 @@ export default function DownloadAsExcel({
         });
       }
     }
+
+    if (Object.keys(chartPayloads).length === 0) return; // Aktif sekmede indirilir chart yok
+
     SupersetClient.postForm(
       `/api/v1/dashboard/${dashboardId}/export_dashboard_excel`,
       {

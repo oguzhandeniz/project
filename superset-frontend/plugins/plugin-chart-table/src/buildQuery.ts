@@ -23,6 +23,7 @@ import {
   getMetricLabel,
   getTimeOffset,
   isPhysicalColumn,
+  QueryFormOrderBy,
   parseDttmToDate,
   QueryMode,
   QueryObject,
@@ -37,8 +38,7 @@ import {
 } from '@superset-ui/chart-controls';
 import { isEmpty } from 'lodash';
 import { TableChartFormData } from './types';
-import { updateExternalFormData } from './DataTable/utils/externalAPIs';
-
+import { updateTableOwnState } from './DataTable/utils/externalAPIs';
 /**
  * Infer query mode from form data. If `all_columns` is set, then raw records mode,
  * otherwise defaults to aggregation mode.
@@ -202,18 +202,49 @@ const buildQuery: BuildQuery<TableChartFormData> = (
 
     const moreProps: Partial<QueryObject> = {};
     const ownState = options?.ownState ?? {};
-    if (formDataCopy.result_type !== 'full' && formDataCopy.server_pagination) {
-      moreProps.row_limit =
-        ownState.pageSize ?? formDataCopy.server_page_length;
-      moreProps.row_offset =
-        (ownState.currentPage ?? 0) * (ownState.pageSize ?? 0);
+    const isDownloadQuery =
+      ['csv', 'xlsx'].includes(formData?.result_format || '') ||
+      (formData?.result_format === 'json' &&
+        formData?.result_type === 'results');
+
+    if (isDownloadQuery) {
+      moreProps.row_limit = Number(formDataCopy.row_limit) || 0;
+      moreProps.row_offset = 0;
+    }
+
+    if (!isDownloadQuery && formDataCopy.server_pagination) {
+      /**
+       * pageSize belirleme sırası
+       * 1) Kullanıcı tabloyu büyütüp/küçülttüğünde ownState.pageSize gelir
+       * 2) Kontrol panelindeki “Server page length” (formData.server_page_length)
+       * 3) Hiçbiri yoksa güvenli varsayılan 20
+       */
+      const pageSize = Number(
+        ownState.pageSize ?? formDataCopy.server_page_length ?? 20,
+      );
+
+      // Sayfa numarası (0-tabanlı)
+      const currentPage = Number(ownState.currentPage ?? 0);
+
+      moreProps.row_limit = pageSize; // LIMIT
+      moreProps.row_offset = currentPage * pageSize; // OFFSET
+    }
+
+    // getting sort by in case of server pagination from own state
+    let sortByFromOwnState: QueryFormOrderBy[] | undefined;
+    if (Array.isArray(ownState?.sortBy) && ownState?.sortBy.length > 0) {
+      const sortByItem = ownState?.sortBy[0];
+      sortByFromOwnState = [[sortByItem?.key, !sortByItem?.desc]];
     }
 
     let queryObject = {
       ...baseQueryObject,
       columns,
       extras: !isEmpty(timeOffsets) && !temporalColum ? {} : extras,
-      orderby,
+      orderby:
+        formData.server_pagination && sortByFromOwnState
+          ? sortByFromOwnState
+          : orderby,
       metrics,
       post_processing: postProcessing,
       time_offsets: timeOffsets,
@@ -227,11 +258,12 @@ const buildQuery: BuildQuery<TableChartFormData> = (
         JSON.stringify(queryObject.filters)
     ) {
       queryObject = { ...queryObject, row_offset: 0 };
-      updateExternalFormData(
-        options?.hooks?.setDataMask,
-        0,
-        queryObject.row_limit ?? 0,
-      );
+      const modifiedOwnState = {
+        ...(options?.ownState || {}),
+        currentPage: 0,
+        pageSize: queryObject.row_limit ?? 0,
+      };
+      updateTableOwnState(options?.hooks?.setDataMask, modifiedOwnState);
     }
     // Because we use same buildQuery for all table on the page we need split them by id
     options?.hooks?.setCachedChanges({
@@ -311,12 +343,31 @@ const buildQuery: BuildQuery<TableChartFormData> = (
     }
 
     if (formData.server_pagination) {
+      if (ownState.searchText && ownState?.searchColumn) {
+        queryObject = {
+          ...queryObject,
+          filters: [
+            ...(queryObject.filters || []),
+            {
+              col: ownState?.searchColumn,
+              op: 'ILIKE',
+              val: `${ownState.searchText}%`,
+            },
+          ],
+        };
+      }
+    }
+
+    // Now since row limit control is always visible even
+    // in case of server pagination
+    // we must use row limit from form data
+    if (formData.server_pagination && !isDownloadQuery) {
       return [
         { ...queryObject },
         {
           ...queryObject,
           time_offsets: [],
-          row_limit: 0,
+          row_limit: Number(formData?.row_limit) ?? 0,
           row_offset: 0,
           post_processing: [],
           is_rowcount: true,

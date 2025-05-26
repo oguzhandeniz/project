@@ -15,12 +15,19 @@ logger = logging.getLogger(__name__)
 
 # Düzenli ifadeler tanımları
 negative_number_re = re.compile(r"^-[0-9.]+$")
-problematic_chars_re = re.compile(r'^(?:"{2}|\s{1,})(?=[\-@+|=%])|^[\-@+|=%]')
+problematic_chars_re = re.compile(
+    r'^(?:"{2}|\s{1,})(?=[\-@+|=%])|^[\-@+|=%]'
+)
 
 def escape_value(value: Union[str, float, int, None]) -> str:
-    if pd.isna(value):  # Eğer değer NaN ise
-        return ""  # Boş string döndür
-    value = str(value)  # Değeri string'e çevir
+    """
+    Yalnızca string değerler için CSV enjeksiyonu koruması uygulayan
+    yardımcı fonksiyon.
+    """
+    if pd.isna(value):
+        return ""
+
+    value = str(value)
 
     needs_escaping = problematic_chars_re.match(value) is not None
     is_negative_number = negative_number_re.match(value) is not None
@@ -33,38 +40,54 @@ def escape_value(value: Union[str, float, int, None]) -> str:
 
 def escape_string_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Sadece string sütunlara kaçırma işlemi uygular.
+    DataFrame içindeki sadece string/object kolonlarını gezer 
+    ve oradaki değerleri `escape_value` ile temizler.
     """
-    string_columns = df.select_dtypes(include=[np.object])  # Sadece string sütunlar
+    string_columns = df.select_dtypes(include=[object])
     for col in string_columns.columns:
         df[col] = df[col].apply(escape_value)
     return df
 
 def df_to_escaped_csv(df: pd.DataFrame, **kwargs: Any) -> str:
     """
-    DataFrame'i CSV'ye kaçırarak ve BOM ekleyerek çevirir.
+    DataFrame'i, sadece string kolonları "escape" ederek
+    CSV formatına dönüştürür ve başına BOM ekler.
     """
-    # Sadece string sütunlara kaçırma işlemi uygula
+
+    # 1) Sadece metin kolonlarını zararlı karakterlerden temizle
     df = escape_string_columns(df)
 
-    # `encoding`, `sep` ve `index` parametrelerini kwargs'tan çıkarıp doğrudan `to_csv` fonksiyonuna ekle
+    # 2) Sık kullanılan CSV parametrelerini kwargs içinden çek veya varsayılana ayarla
     encoding = kwargs.pop('encoding', 'utf-8')
-    sep = kwargs.pop('sep', ';')  # Noktalı virgül ayırıcı olarak ayarlandı
+    sep = kwargs.pop('sep', ';')
     index = kwargs.pop('index', False)
 
-    # Tırnakları engellemek için `quoting` ve `quotechar` ayarları
+    # 3) Ondalık ayracı ve float formatını belirleyin:
+    #    Excel'in Türkçe locale'de otomatik parse etmesi için:
+    #    decimal=',' kullanabilirsiniz.
+    #
+    #    İster nokta (.) ister virgül (,) kullanın, Excel "Veri Al" sihirbazından 
+    #    manuel düzeltmezseniz yine yanlışa düşebilir. 
+    #
+    #    Örnek: float_format='%.6f' => virgülden sonra 6 basamak
+    float_format = kwargs.pop('float_format', '%.15g')
+    decimal = kwargs.pop('decimal', ',')
+
+    # 4) CSV dönüştürme
     csv_data = df.to_csv(
-        escapechar="\\", 
-        encoding=encoding, 
-        sep=sep,  # Noktalı virgül kullanılıyor
-        index=index, 
-        quoting=csv.QUOTE_NONE,  # Hiçbir hücrede tırnak kullanılmasın
-        quotechar='',  # Tırnak karakteri boş string
-        chunksize=10000, 
+        escapechar="\\",
+        encoding=encoding,
+        sep=sep,
+        index=index,
+        quoting=csv.QUOTE_NONE,
+        quotechar='',
+        float_format=float_format,
+        decimal=decimal,       # <-- EKLENDİ: Ondalık ayracı virgül yap
+        chunksize=10000,
         **kwargs
     )
 
-    # BOM karakterini ekleyerek CSV verisini döndür
+    # 5) Başına BOM ekleyerek geri döndür
     bom = '\ufeff'
     return bom + csv_data
 
@@ -80,7 +103,7 @@ def get_chart_csv_data(
     chart_url: str, auth_cookies: Optional[dict[str, str]] = None
 ) -> Optional[bytes]:
     """
-    Belirli bir URL'den CSV verisini çeker.
+    Belirli bir URL'den CSV verisini bytes olarak çeker.
     """
     content = None
     if auth_cookies:
@@ -99,38 +122,40 @@ def get_chart_dataframe(
     chart_url: str, auth_cookies: Optional[dict[str, str]] = None
 ) -> Optional[pd.DataFrame]:
     """
-    Bir grafik URL'sinden veri çekip Pandas DataFrame'e dönüştürür.
+    Bir grafik URL'sinden veri çekip içerdiği JSON formatındaki
+    tablo verisini Pandas DataFrame'e dönüştürür.
     """
     content = get_chart_csv_data(chart_url, auth_cookies)
     if content is None:
         return None
 
-    # Veriyi doğru şekilde decode et ve DataFrame'e çevir
+    # 1) JSON olarak decode et
     result = json.loads(content.decode("utf-8"))
-    pd.set_option("display.float_format", lambda x: str(x))
-    df = pd.DataFrame.from_dict(result["result"][0]["data"])
 
+    # 2) JSON'daki "data" anahtarından DataFrame oluştur
+    df = pd.DataFrame.from_dict(result["result"][0]["data"])
     if df.empty:
         return None
 
-    # Zaman tipi veriler için dönüştürme işlemi
+    # 3) Zaman tiplerini datetime dönüştür
     try:
         if GenericDataType.TEMPORAL in result["result"][0]["coltypes"]:
-            for i in range(len(result["result"][0]["coltypes"])):
-                if result["result"][0]["coltypes"][i] == GenericDataType.TEMPORAL:
-                    df[result["result"][0]["colnames"][i]] = df[
-                        result["result"][0]["colnames"][i]
-                    ].astype("datetime64[ms]")
+            for i, coltype in enumerate(result["result"][0]["coltypes"]):
+                if coltype == GenericDataType.TEMPORAL:
+                    colname = result["result"][0]["colnames"][i]
+                    df[colname] = df[colname].astype("datetime64[ms]")
     except BaseException as err:
         logger.error(err)
 
-    # Çoklu indeksleri ayarlama
+    # 4) Çoklu (hiyerarşik) kolon ve indeks ayarlaması
     df.columns = pd.MultiIndex.from_tuples(
-        tuple(colname) if isinstance(colname, list) else (colname,)
-        for colname in result["result"][0]["colnames"]
+        tuple(col) if isinstance(col, list) else (col,)
+        for col in result["result"][0]["colnames"]
     )
     df.index = pd.MultiIndex.from_tuples(
-        tuple(indexname) if isinstance(indexname, list) else (indexname,)
-        for indexname in result["result"][0]["indexnames"]
+        tuple(ind) if isinstance(ind, list) else (ind,)
+        for ind in result["result"][0]["indexnames"]
     )
+
     return df
+    

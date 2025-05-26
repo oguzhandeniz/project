@@ -27,7 +27,7 @@ configureTestingLibrary({
   testIdAttribute: 'data-test',
 });
 
-document.body.innerHTML = '<div id="app" data-bootstrap=""></div>';
+//document.body.innerHTML = '<div id="app" data-bootstrap=""></div>';
 expect.extend(matchers);
 
 // Allow JSX tests to have React import readily available

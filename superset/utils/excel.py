@@ -23,7 +23,7 @@ import re
 import math
 import numpy as np
 import logging
-
+logging.disable(logging.CRITICAL)  
 from html.parser import HTMLParser
 from superset.charts.post_processing import table
 from xlsxwriter.utility import xl_range
@@ -31,10 +31,12 @@ from xlsxwriter.utility import xl_range
 # İstediğiniz şekilde özelleştirebilirsiniz
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+logger.disabled = True   
+
 ch = logging.StreamHandler()
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 ch.setFormatter(formatter)
-logger.addHandler(ch)
+# logger.addHandler(ch)
 
 ###############################################################################
 # TEMEL FONKSİYONLAR
@@ -141,7 +143,8 @@ def apply_add_header_instructions(worksheet, workbook, instructions):
                 worksheet.merge_range(start_row, start_col, end_row, end_col, text, merge_format)
             except Exception as e:
                 if "overlaps" in str(e):
-                    logger.warning(f"AddHeader çakışma uyarısı: Merge range '{start_cell}:{end_cell}' overlaps. Geçiliyor.")
+                    # logger.warning(f"AddHeader çakışma uyarısı: Merge range '{start_cell}:{end_cell}' overlaps. Geçiliyor.")
+                    pass                   
                 else:
                     raise
         else:
@@ -150,7 +153,8 @@ def apply_add_header_instructions(worksheet, workbook, instructions):
                 worksheet.write(start_row, start_col, text, single_format)
             except Exception as e:
                 if "overlaps" in str(e):
-                    logger.warning(f"AddHeader çakışma uyarısı: Hücre '{start_cell}' overlaps. Geçiliyor.")
+                    # logger.warning(f"AddHeader çakışma uyarısı: Hücre '{start_cell}' overlaps. Geçiliyor.")
+                    pass                   
                 else:
                     raise
 
@@ -418,7 +422,8 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                 worksheet.merge_range(start_row_idx, start_col, end_row_idx, end_col, '', merged_format)
             except Exception as e:
                 if "overlaps" in str(e):
-                    logger.warning(f"add_header_or_markdown çakışma uyarısı: '{start_cell}:{end_cell}' overlaps. Geçiliyor.")
+                    # logger.warning(f"add_header_or_markdown çakışma uyarısı: '{start_cell}:{end_cell}' overlaps. Geçiliyor.")
+                    pass                   
                 else:
                     raise
 
@@ -464,7 +469,8 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                         worksheet.merge_range(row, 0, row, max_columns - 1, '', merged_format)
                     except Exception as e:
                         if "overlaps" in str(e):
-                            logger.warning(f"add_header_or_markdown çakışma uyarısı: '{row},0 -> {row},{max_columns-1}' overlaps. Geçiliyor.")
+                            # logger.warning(f"add_header_or_markdown çakışma uyarısı: '{row},0 -> {row},{max_columns-1}' overlaps. Geçiliyor.")
+                            pass                   
                         else:
                             raise
 
@@ -487,7 +493,8 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                         worksheet.merge_range(row, 0, row, max_columns - 1, cleaned_content, cell_format)
                     except Exception as e:
                         if "overlaps" in str(e):
-                            logger.warning(f"add_header_or_markdown çakışma uyarısı: '{row},0 -> {row},{max_columns-1}' overlaps. Geçiliyor.")
+                            # logger.warning(f"add_header_or_markdown çakışma uyarısı: '{row},0 -> {row},{max_columns-1}' overlaps. Geçiliyor.")
+                            pass                   
                         else:
                             raise
                 else:
@@ -542,7 +549,8 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                     worksheet.merge_range(start_row_idx, start_col, end_row_idx, end_col, '', merged_format)
                 except Exception as e:
                     if "overlaps" in str(e):
-                        logger.warning(f"add_header_or_markdown çakışma uyarısı (liste): '{start_cell}:{end_cell}' overlaps. Geçiliyor.")
+                        # logger.warning(f"add_header_or_markdown çakışma uyarısı (liste): '{start_cell}:{end_cell}' overlaps. Geçiliyor.")
+                        pass                   
                     else:
                         raise
 
@@ -584,7 +592,8 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                             worksheet.merge_range(row, 0, row, max_columns - 1, '', merged_format)
                         except Exception as e:
                             if "overlaps" in str(e):
-                                logger.warning(f"add_header_or_markdown çakışma uyarısı (liste HTML): '{row},0 -> {row},{max_columns-1}' overlaps. Geçiliyor.")
+                                # logger.warning(f"add_header_or_markdown çakışma uyarısı (liste HTML): '{row},0 -> {row},{max_columns-1}' overlaps. Geçiliyor.")
+                                pass                   
                             else:
                                 raise
 
@@ -607,7 +616,8 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                             worksheet.merge_range(row, 0, row, max_columns - 1, cleaned_line, cell_format)
                         except Exception as e:
                             if "overlaps" in str(e):
-                                logger.warning(f"add_header_or_markdown çakışma uyarısı (liste düz): '{row},0 -> {row},{max_columns-1}' overlaps. Geçiliyor.")
+                                # logger.warning(f"add_header_or_markdown çakışma uyarısı (liste düz): '{row},0 -> {row},{max_columns-1}' overlaps. Geçiliyor.")
+                                pass                   
                             else:
                                 raise
                     else:
@@ -918,7 +928,8 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
                         )
                     except Exception as e:
                         if "overlaps" in str(e):
-                            logger.warning(f"add_dataframe_to_excel header merge çakışma: '{start_row+row},{start_col} -> {start_row+row},{end_col}' overlaps.")
+                            # logger.warning(f"add_dataframe_to_excel header merge çakışma: '{start_row+row},{start_col} -> {start_row+row},{end_col}' overlaps.")
+                            pass                   
                         else:
                             raise
                 else:
@@ -952,7 +963,8 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
                         )
                     except Exception as e:
                         if "overlaps" in str(e):
-                            logger.warning(f"add_dataframe_to_excel header dikey merge çakışma: '{start_row+merge_start},{col_idx} -> {start_row+merge_end},{col_idx}' overlaps.")
+                            # logger.warning(f"add_dataframe_to_excel header dikey merge çakışma: '{start_row+merge_start},{col_idx} -> {start_row+merge_end},{col_idx}' overlaps.")
+                            pass                   
                         else:
                             raise
                 else:
@@ -979,7 +991,7 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
 
     for col_idx, column_name in enumerate(df.columns):
         if column_name in column_config and column_config[column_name].get('allowRowGrouping', False):
-            logger.info(f"Row grouping aktif: Kolon adı = '{column_name}'")
+            # logger.info(f"Row grouping aktif: Kolon adı = '{column_name}'")
 
             start_merge_row = None
             current_value = None
@@ -1005,16 +1017,14 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
                                 )
                             except Exception as e:
                                 if "overlaps" in str(e):
-                                    logger.warning(f"add_dataframe_to_excel satır birleştirme çakışma: {data_start_row+start_merge_row},{col_idx} -> {data_start_row+row_idx-1},{col_idx}")
+                                    # logger.warning(f"add_dataframe_to_excel satır birleştirme çakışma: {data_start_row+start_merge_row},{col_idx} -> {data_start_row+row_idx-1},{col_idx}")
+                                    pass                   
                                 else:
                                     raise
 
                             start_cell = indices_to_excel_cell(data_start_row + start_merge_row, col_idx)
                             end_cell = indices_to_excel_cell(data_start_row + row_idx - 1, col_idx)
-                            logger.info(
-                                f"Kolon '{column_name}' => satır birleştirme: "
-                                f"{start_cell} ile {end_cell}, değer='{current_value}'"
-                            )
+                            
                         else:
                             single_cell = indices_to_excel_cell(data_start_row + start_merge_row, col_idx)
                             worksheet.write(
@@ -1023,10 +1033,7 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
                                 current_value,
                                 merge_format
                             )
-                            logger.info(
-                                f"Kolon '{column_name}' => tek satıra yazıldı: {single_cell}, değer='{current_value}'"
-                            )
-
+                            
                     current_value = value
                     start_merge_row = row_idx
 
@@ -1041,16 +1048,14 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
                         )
                     except Exception as e:
                         if "overlaps" in str(e):
-                            logger.warning(f"add_dataframe_to_excel satır birleştirme çakışma (SON GRUP): {data_start_row+start_merge_row},{col_idx} -> {data_start_row+len(df)-1},{col_idx}")
+                            # logger.warning(f"add_dataframe_to_excel satır birleştirme çakışma (SON GRUP): {data_start_row+start_merge_row},{col_idx} -> {data_start_row+len(df)-1},{col_idx}")
+                            pass                   
                         else:
                             raise
 
                     start_cell = indices_to_excel_cell(data_start_row + start_merge_row, col_idx)
                     end_cell = indices_to_excel_cell(data_start_row + len(df) - 1, col_idx)
-                    logger.info(
-                        f"Kolon '{column_name}' => satır birleştirme (SON GRUP): "
-                        f"{start_cell} ile {end_cell}, değer='{current_value}'"
-                    )
+                    
                 else:
                     single_cell = indices_to_excel_cell(data_start_row + start_merge_row, col_idx)
                     worksheet.write(
@@ -1058,10 +1063,6 @@ def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
                         col_idx,
                         current_value,
                         merge_format
-                    )
-                    logger.info(
-                        f"Kolon '{column_name}' => tek satıra yazıldı (SON GRUP): "
-                        f"{single_cell}, değer='{current_value}'"
                     )
 
     # (Opsiyonel) Tekrarlı hücre değerlerini silmek isterseniz:

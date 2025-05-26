@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -16,6 +17,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+
 import {
   CSSProperties,
   useCallback,
@@ -24,6 +26,7 @@ import {
   useState,
   MouseEvent,
   KeyboardEvent as ReactKeyboardEvent,
+  useEffect,
 } from 'react';
 
 import {
@@ -61,11 +64,13 @@ import {
   PlusCircleOutlined,
   TableOutlined,
 } from '@ant-design/icons';
-import { isEmpty, isNumber } from 'lodash';
+import { debounce, isEmpty, isNumber, isEqual } from 'lodash';
 import {
   ColorSchemeEnum,
   DataColumnMeta,
   TableChartTransformedProps,
+  SearchOption,
+  SortByItem,
 } from './types';
 import DataTable, {
   DataTableProps,
@@ -77,7 +82,7 @@ import DataTable, {
 import Styles from './Styles';
 import { formatColumnValue } from './utils/formatValue';
 import { PAGE_SIZE_OPTIONS } from './consts';
-import { updateExternalFormData } from './DataTable/utils/externalAPIs';
+import { updateTableOwnState } from './DataTable/utils/externalAPIs';
 import getScrollBarSize from './DataTable/utils/getScrollBarSize';
 
 type ValueRange = [number, number];
@@ -176,20 +181,28 @@ function SortIcon<D extends object>({ column }: { column: ColumnInstance<D> }) {
   return sortIcon;
 }
 
-function SearchInput({ count, value, onChange }: SearchInputProps) {
-  return (
-    <span className="dt-global-filter">
-      {t('Search')}{' '}
-      <input
-        aria-label={t('Search %s records', count)}
-        className="form-control input-sm"
-        placeholder={tn('search.num_records', count)}
-        value={value}
-        onChange={onChange}
-      />
-    </span>
-  );
-}
+const SearchInput = ({
+  count,
+  value,
+  onChange,
+  onBlur,
+  inputRef,
+}: SearchInputProps) => (
+  <span className="dt-global-filter">
+    {t('Search')}{' '}
+    <input
+      ref={inputRef}
+      aria-label={t('Search %s records', count)}
+      className="form-control input-sm"
+      placeholder={tn('search.num_records', count)}
+      // @ts-ignore – 4.1 type’larında yok, 5.x’te eklendi
+      value={value}
+      // @ts-ignore – SearchInputProps’a eklenmedi
+      onChange={onChange}
+      onBlur={onBlur}
+    />
+  </span>
+);
 
 function SelectPageSize({
   options,
@@ -268,6 +281,9 @@ export default function TableChart<D extends DataRecord = DataRecord>(
     isUsingTimeComparison,
     basicColorFormatters,
     basicColorColumnFormatters,
+    hasServerPageLengthChanged,
+    serverPageLength,
+    slice_id,
     enableHorizontalMode,
     titleRow,
   } = props;
@@ -295,12 +311,17 @@ export default function TableChart<D extends DataRecord = DataRecord>(
   const theme = useTheme();
 
   // only take relevant page size options
-  const pageSizeOptions = useMemo(() => {
-    const getServerPagination = (n: number) => n <= rowCount;
-    return PAGE_SIZE_OPTIONS.filter(([n]) =>
-      serverPagination ? getServerPagination(n) : n <= 2 * data.length,
-    ) as SizeOption[];
-  }, [data.length, rowCount, serverPagination]);
+  const pageSizeOptions = useMemo(
+    () =>
+      PAGE_SIZE_OPTIONS.filter(([n]) =>
+        serverPagination
+          ? rowCount === 0 // henüz rowCount yoksa bütün seçenekler
+            ? true
+            : n <= rowCount
+          : n <= 2 * data.length,
+      ) as SizeOption[],
+    [data.length, rowCount, serverPagination],
+  );
 
   const getValueRange = useCallback(
     function getValueRange(key: string, alignPositiveNegative: boolean) {
@@ -681,11 +702,14 @@ export default function TableChart<D extends DataRecord = DataRecord>(
 
   const getColumnConfigs = useCallback(
     (
-      column: DataColumnMeta | any,
+      column: DataColumnMeta,
       i: number,
-    ): ColumnWithLooseAccessor<D> | { label: any; key: any; group: any } => {
+    ): ColumnWithLooseAccessor<D> & {
+      columnKey: string;
+    } => {
       const {
         key,
+        // @ts-ignore – 4.1 type’larında yok, 5.x’te eklendi
         label,
         isNumeric,
         dataType,
@@ -750,8 +774,10 @@ export default function TableChart<D extends DataRecord = DataRecord>(
         // must use custom accessor to allow `.` in column names
         // typing is incorrect in current version of `@types/react-table`
         // so we ask TS not to check.
+        // @ts-ignore – 4.1 type’larında yok, 5.x’te eklendi
         label,
         key,
+        columnKey: key,
         group: config.groups ? config.groups.split(',') : [],
         accessor: ((datum: D) => datum[key]) as never,
         Cell: ({ value, row }: { value: DataRecordValue; row: Row<D> }) => {
@@ -1120,12 +1146,49 @@ export default function TableChart<D extends DataRecord = DataRecord>(
     [filteredColumnsMeta, getColumnConfigs, enableGrouping],
   );
 
+  const [searchOptions, setSearchOptions] = useState<SearchOption[]>([]);
+
+  useEffect(() => {
+    const options = (
+      columns as unknown as ColumnWithLooseAccessor &
+        {
+          columnKey: string;
+          sortType?: string;
+        }[]
+    )
+      .filter(col => col?.sortType === 'alphanumeric')
+      .map(column => ({
+        value: column.columnKey,
+        label: column.columnKey,
+      }));
+
+    if (!isEqual(options, searchOptions)) {
+      setSearchOptions(options || []);
+    }
+  }, [columns]);
+
   const handleServerPaginationChange = useCallback(
     (pageNumber: number, pageSize: number) => {
-      updateExternalFormData(setDataMask, pageNumber, pageSize);
+      const modifiedOwnState = {
+        ...serverPaginationData,
+        currentPage: pageNumber,
+        pageSize,
+      };
+      updateTableOwnState(setDataMask, modifiedOwnState);
     },
     [setDataMask],
   );
+
+  useEffect(() => {
+    if (hasServerPageLengthChanged) {
+      const modifiedOwnState = {
+        ...serverPaginationData,
+        currentPage: 0,
+        pageSize: serverPageLength,
+      };
+      updateTableOwnState(setDataMask, modifiedOwnState);
+    }
+  }, []);
 
   const handleSizeChange = useCallback(
     ({ width, height }: { width: number; height: number }) => {
@@ -1162,6 +1225,42 @@ export default function TableChart<D extends DataRecord = DataRecord>(
 
   const { width: widthFromState, height: heightFromState } = tableSize;
 
+  const handleSortByChange = useCallback(
+    (sortBy: SortByItem[]) => {
+      if (!serverPagination) return;
+      const modifiedOwnState = {
+        ...serverPaginationData,
+        sortBy,
+      };
+      updateTableOwnState(setDataMask, modifiedOwnState);
+    },
+    [setDataMask, serverPagination],
+  );
+
+  const handleSearch = (searchText: string) => {
+    const modifiedOwnState = {
+      ...(serverPaginationData || {}),
+      searchColumn:
+        serverPaginationData?.searchColumn || searchOptions[0]?.value,
+      searchText,
+      currentPage: 0, // Reset to first page when searching
+    };
+    updateTableOwnState(setDataMask, modifiedOwnState);
+  };
+
+  const debouncedSearch = debounce(handleSearch, 800);
+
+  const handleChangeSearchCol = (searchCol: string) => {
+    if (!isEqual(searchCol, serverPaginationData?.searchColumn)) {
+      const modifiedOwnState = {
+        ...(serverPaginationData || {}),
+        searchColumn: searchCol,
+        searchText: '',
+      };
+      updateTableOwnState(setDataMask, modifiedOwnState);
+    }
+  };
+
   return (
     <Styles>
       <DataTable<D>
@@ -1177,6 +1276,9 @@ export default function TableChart<D extends DataRecord = DataRecord>(
         serverPagination={serverPagination}
         onServerPaginationChange={handleServerPaginationChange}
         onColumnOrderChange={() => setColumnOrderToggle(!columnOrderToggle)}
+        initialSearchText={serverPaginationData?.searchText || ''}
+        sortByFromParent={serverPaginationData?.sortBy || []}
+        searchInputId={`${slice_id}-search`}
         // 9 page items in > 340px works well even for 100+ pages
         maxPageItemCount={width > 340 ? 9 : 7}
         noResults={getNoResultsMessage}
@@ -1190,6 +1292,11 @@ export default function TableChart<D extends DataRecord = DataRecord>(
         renderTimeComparisonDropdown={
           isUsingTimeComparison ? renderTimeComparisonDropdown : undefined
         }
+        handleSortByChange={handleSortByChange}
+        onSearchColChange={handleChangeSearchCol}
+        manualSearch={serverPagination}
+        onSearchChange={debouncedSearch}
+        searchOptions={searchOptions}
         enableGrouping={enableGrouping}
         enableHorizontalMode={enableHorizontalMode}
         titleRow={titleRow}

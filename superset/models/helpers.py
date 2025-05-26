@@ -907,10 +907,10 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
         sqlaq = self.get_sqla_query(**query_obj)
         sql = self.database.compile_sqla_query(sqlaq.sqla_query)
         sql = self._apply_cte(sql, sqlaq.cte)
-        try:
-            sql = SQLStatement(sql, engine=self.db_engine_spec.engine).format()
-        except SupersetParseError:
-            logger.warning("Unable to parse SQL to format it, passing it as-is")
+        #try:
+        #    sql = SQLStatement(sql, engine=self.db_engine_spec.engine).format()
+        #except SupersetParseError:
+        #    logger.warning("Unable to parse SQL to format it, passing it as-is")
 
         if mutate:
             sql = self.database.mutate_sql_based_on_config(sql)

@@ -17,13 +17,10 @@
  * under the License.
  */
 import { Menu } from 'src/components/Menu';
-import DownloadScreenshot from './DownloadScreenshot';
 import { DownloadScreenshotFormat } from './types';
 import DownloadAsExcel from './DownloadAsExcel';
 
 export interface DownloadMenuItemProps {
-  pdfMenuItemTitle: string;
-  imageMenuItemTitle: string;
   excelMenuItemTitle: string;
   dashboardTitle: string;
   logEvent?: Function;
@@ -31,31 +28,10 @@ export interface DownloadMenuItemProps {
 }
 
 const DownloadMenuItems = (props: DownloadMenuItemProps) => {
-  const {
-    pdfMenuItemTitle,
-    imageMenuItemTitle,
-    excelMenuItemTitle,
-    logEvent,
-    dashboardId,
-    ...rest
-  } = props;
+  const { excelMenuItemTitle, logEvent, dashboardId, ...rest } = props;
 
   return (
     <Menu selectable={false}>
-      <DownloadScreenshot
-        text={pdfMenuItemTitle}
-        dashboardId={dashboardId}
-        logEvent={logEvent}
-        format={DownloadScreenshotFormat.PDF}
-        {...rest}
-      />
-      <DownloadScreenshot
-        text={imageMenuItemTitle}
-        dashboardId={dashboardId}
-        logEvent={logEvent}
-        format={DownloadScreenshotFormat.PNG}
-        {...rest}
-      />
       <DownloadAsExcel
         text={excelMenuItemTitle}
         dashboardId={dashboardId}

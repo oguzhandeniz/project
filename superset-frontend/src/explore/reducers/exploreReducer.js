@@ -195,6 +195,51 @@ export default function exploreReducer(state = {}, action) {
         new_form_data = transformed.formData;
         currentControlsState = transformed.controlsState;
       }
+      const dependantControls = Object.entries(state.controls)
+        .filter(
+          ([, item]) =>
+            Array.isArray(item?.validationDependancies) &&
+            item.validationDependancies.includes(controlName),
+        )
+        .map(([key, item]) => ({
+          controlState: item,
+          dependantControlName: key,
+        }));
+
+      let updatedControlStates = {};
+      if (dependantControls.length > 0) {
+        const updatedControls = dependantControls.map(
+          ({ controlState, dependantControlName }) => {
+            // overwrite state form data with current control value as the redux state will not
+            // have latest action value
+            const overWrittenState = {
+              ...state,
+              form_data: {
+                ...state.form_data,
+                [controlName]: action.value,
+              },
+            };
+
+            return {
+              // Re run validation for dependant controls
+              controlState: getControlStateFromControlConfig(
+                controlState,
+                overWrittenState,
+                controlState?.value,
+              ),
+              dependantControlName,
+            };
+          },
+        );
+
+        updatedControlStates = updatedControls.reduce(
+          (acc, { controlState, dependantControlName }) => {
+            acc[dependantControlName] = { ...controlState };
+            return acc;
+          },
+          {},
+        );
+      }
 
       return {
         ...state,
@@ -209,6 +254,7 @@ export default function exploreReducer(state = {}, action) {
             },
           }),
           ...rerenderedControls,
+          ...updatedControlStates,
         },
       };
     },

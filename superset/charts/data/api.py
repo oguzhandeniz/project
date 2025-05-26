@@ -14,10 +14,12 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
 from __future__ import annotations
 
 import contextlib
 import logging
+import urllib.parse  # <-- EKLENDİ: Dosya adını güvenli hâle getirmek için kullanacağız
 from typing import Any, TYPE_CHECKING
 
 from flask import current_app, g, make_response, request, Response
@@ -25,7 +27,7 @@ from flask_appbuilder.api import expose, protect
 from flask_babel import gettext as _
 from marshmallow import ValidationError
 
-from superset import is_feature_enabled, security_manager
+from superset import db, is_feature_enabled, security_manager
 from superset.async_events.async_query_manager import AsyncQueryTokenException
 from superset.charts.api import ChartRestApi
 from superset.charts.data.query_context_cache_loader import QueryContextCacheLoader
@@ -44,6 +46,7 @@ from superset.connectors.sqla.models import BaseDatasource
 from superset.daos.exceptions import DatasourceNotFound
 from superset.exceptions import QueryObjectValidationError
 from superset.extensions import event_logger
+from superset.models.slice import Slice
 from superset.models.sql_lab import Query
 from superset.utils import json
 from superset.utils.core import (
@@ -61,6 +64,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def make_safe_filename(filename: str) -> str:
+    """
+    Problemli boşluk ve Türkçe karakterler için dosya adını güvenli hâle getirir.
+    İsterseniz sadece tırnak içine de alabilirsiniz: return f"\"{filename}\""
+    Burada URL-encode yapıyoruz.
+    """
+    return urllib.parse.quote(filename, safe="()[]- _.")  # Boşluk vs. encode edilip korunur
+
+
 class ChartDataRestApi(ChartRestApi):
     include_route_methods = {"get_data", "data", "data_from_cache"}
 
@@ -75,52 +87,6 @@ class ChartDataRestApi(ChartRestApi):
         """
         Take a chart ID and uses the query context stored when the chart was saved
         to return payload data response.
-        ---
-        get:
-          summary: Return payload data response for a chart
-          description: >-
-            Takes a chart ID and uses the query context stored when the chart was saved
-            to return payload data response.
-          parameters:
-          - in: path
-            schema:
-              type: integer
-            name: pk
-            description: The chart ID
-          - in: query
-            name: format
-            description: The format in which the data should be returned
-            schema:
-              type: string
-          - in: query
-            name: type
-            description: The type in which the data should be returned
-            schema:
-              type: string
-          - in: query
-            name: force
-            description: Should the queries be forced to load from the source
-            schema:
-                type: boolean
-          responses:
-            200:
-              description: Query result
-              content:
-                application/json:
-                  schema:
-                    $ref: "#/components/schemas/ChartDataResponseSchema"
-            202:
-              description: Async job details
-              content:
-                application/json:
-                  schema:
-                    $ref: "#/components/schemas/ChartDataAsyncResponseSchema"
-            400:
-              $ref: '#/components/responses/400'
-            401:
-              $ref: '#/components/responses/401'
-            500:
-              $ref: '#/components/responses/500'
         """
         chart = self.datamodel.get(pk, self._base_filters)
         if not chart:
@@ -188,40 +154,6 @@ class ChartDataRestApi(ChartRestApi):
         """
         Take a query context constructed in the client and return payload
         data response for the given query
-        ---
-        post:
-          summary: Return payload data response for the given query
-          description: >-
-            Takes a query context constructed in the client and returns payload data
-            response for the given query.
-          requestBody:
-            description: >-
-              A query context consists of a datasource from which to fetch data
-              and one or many query objects.
-            required: true
-            content:
-              application/json:
-                schema:
-                  $ref: "#/components/schemas/ChartDataQueryContextSchema"
-          responses:
-            200:
-              description: Query result
-              content:
-                application/json:
-                  schema:
-                    $ref: "#/components/schemas/ChartDataResponseSchema"
-            202:
-              description: Async job details
-              content:
-                application/json:
-                  schema:
-                    $ref: "#/components/schemas/ChartDataAsyncResponseSchema"
-            400:
-              $ref: '#/components/responses/400'
-            401:
-              $ref: '#/components/responses/401'
-            500:
-              $ref: '#/components/responses/500'
         """
         json_body = None
         if request.is_json:
@@ -265,42 +197,13 @@ class ChartDataRestApi(ChartRestApi):
     @protect()
     @statsd_metrics
     @event_logger.log_this_with_context(
-        action=lambda self, *args, **kwargs: f"{self.__class__.__name__}"
-        f".data_from_cache",
+        action=lambda self, *args, **kwargs: f"{self.__class__.__name__}.data_from_cache",
         log_to_statsd=False,
     )
     def data_from_cache(self, cache_key: str) -> Response:
         """
         Take a query context cache key and return payload
         data response for the given query.
-        ---
-        get:
-          summary: Return payload data response for the given query
-          description: >-
-            Takes a query context cache key and returns payload data
-            response for the given query.
-          parameters:
-          - in: path
-            schema:
-              type: string
-            name: cache_key
-          responses:
-            200:
-              description: Query result
-              content:
-                application/json:
-                  schema:
-                    $ref: "#/components/schemas/ChartDataResponseSchema"
-            400:
-              $ref: '#/components/responses/400'
-            401:
-              $ref: '#/components/responses/401'
-            404:
-              $ref: '#/components/responses/404'
-            422:
-              $ref: '#/components/responses/422'
-            500:
-              $ref: '#/components/responses/500'
         """
         try:
             cached_data = self._load_query_context_form_from_cache(cache_key)
@@ -331,9 +234,6 @@ class ChartDataRestApi(ChartRestApi):
             if result is not None:
                 return self._send_chart_response(result)
         # Otherwise, kick off a background job to run the chart query.
-        # Clients will either poll or be notified of query completion,
-        # at which point they will call the /data/<cache_key> endpoint
-        # to retrieve the results.
         async_command = CreateAsyncChartDataJobCommand()
         try:
             async_command.validate(request)
@@ -349,16 +249,28 @@ class ChartDataRestApi(ChartRestApi):
         form_data: dict[str, Any] | None = None,
         datasource: BaseDatasource | Query | None = None,
     ) -> Response:
+        """
+        Bu metot, sorgu sonucunu alır ve istenen formatta (CSV, XLSX, JSON veya ZIP) 
+        HTTP Response olarak döndürür. Boşluk ve Türkçe karakter
+        içeren dosya adları için make_safe_filename kullanılır.
+        """
         result_type = result["query_context"].result_type
         result_format = result["query_context"].result_format
 
         # Post-process the data so it matches the data presented in the chart.
-        # This is needed for sending reports based on text charts that do the
-        # post-processing of data, eg, the pivot table.
         if result_type == ChartDataResultType.POST_PROCESSED:
             result = apply_post_process(result, form_data, datasource)
 
         if result_format in ChartDataResultFormat.table_like():
+            # Get chart name from slice_id
+            if form_data is not None and "slice_id" in form_data:
+                slice_obj = (
+                    db.session.query(Slice).filter_by(id=form_data["slice_id"]).first()
+                )
+                chart_name = slice_obj.chart
+            else:
+                chart_name = "query"
+
             # Verify user has permission to export file
             if not security_manager.can_access("can_csv", "Superset"):
                 return self.response_403()
@@ -368,31 +280,56 @@ class ChartDataRestApi(ChartRestApi):
 
             is_csv_format = result_format == ChartDataResultFormat.CSV
 
-            if len(result["queries"]) == 1 or form_data.get('show_column_totals',False):
-                # return single query results
+            # --------------------------------------
+            # Tek sorgu veya 'show_column_totals' == True -> CSV/XLSX olarak dön
+            # --------------------------------------
+            if len(result["queries"]) == 1 or form_data.get('show_column_totals', False):
                 data = result["queries"][0]["data"]
+                # Dosya adını güvenli hâle getirelim
+                safe_chart_name = make_safe_filename(chart_name)
+
                 if is_csv_format:
-                    return CsvResponse(data, headers=generate_download_headers("csv"))
+                    return CsvResponse(
+                        data,
+                        headers=generate_download_headers("csv", filename=safe_chart_name),
+                    )
 
-                return XlsxResponse(data, headers=generate_download_headers("xlsx"))
+                # XLSX için
+                return XlsxResponse(
+                    data,
+                    headers=generate_download_headers("xlsx", filename=safe_chart_name),
+                )
 
-            # return multi-query results bundled as a zip file
+            # --------------------------------------
+            # Birden fazla sorgu sonucu -> ZIP
+            # --------------------------------------
             def _process_data(query_data: Any) -> Any:
                 if result_format == ChartDataResultFormat.CSV:
                     encoding = current_app.config["CSV_EXPORT"].get("encoding", "utf-8")
                     return query_data.encode(encoding)
                 return query_data
 
-            files = {
-                f"query_{idx + 1}.{result_format}": _process_data(query["data"])
-                for idx, query in enumerate(result["queries"])
-            }
+            files = {}
+            # ZIP dosyasının ismini de güvenli hâle getirelim
+            safe_chart_name = make_safe_filename(chart_name)
+
+            for idx, query in enumerate(result["queries"]):
+                if idx == 0:
+                    file_name = f"{safe_chart_name}.{result_format}"
+                else:
+                    file_name = f"{safe_chart_name}_row_count.{result_format}"
+                data = _process_data(query["data"])
+                files[file_name] = data
+
             return Response(
                 create_zip(files),
-                headers=generate_download_headers("zip"),
+                headers=generate_download_headers("zip", filename=safe_chart_name),
                 mimetype="application/zip",
             )
 
+        # --------------------------------------
+        # JSON format
+        # --------------------------------------
         if result_format == ChartDataResultFormat.JSON:
             response_data = json.dumps(
                 {"result": result["queries"]},
@@ -403,6 +340,7 @@ class ChartDataRestApi(ChartRestApi):
             resp.headers["Content-Type"] = "application/json; charset=utf-8"
             return resp
 
+        # Desteklenmeyen format
         return self.response_400(message=f"Unsupported result_format: {result_format}")
 
     def _get_data_response(
@@ -444,12 +382,7 @@ class ChartDataRestApi(ChartRestApi):
     ) -> QueryContext:
         """
         Create the query context from the form data.
-
-        :param form_data: The chart form data
-        :returns: The query context
-        :raises ValidationError: If the request is incorrect
         """
-
         try:
             return ChartDataQueryContextSchema().load(form_data)
         except KeyError as ex:

@@ -2,81 +2,69 @@
 import os
 import json
 import requests
-from typing import Optional, Any
-
+from typing import Optional
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
-
-from dotenv import load_dotenv  # .env dosyası okumak için
-
+from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 
-# .env dosyasını yükle (path'i kendi sunucunuzdaki yer ile uyarlayın)
+# 1) .env Yükle
 load_dotenv("/report/superset/docker/pythonpath_dev/.env")
 
-# .env içindeki değişkenleri al
-SUPERSET_USERNAME = os.getenv("SUPERSET_USERNAME", "admin")
-SUPERSET_PASSWORD = os.getenv("SUPERSET_PASSWORD", "Of25121698*")
+# 2) Değişkenleri okuma
+SUPERSET_USERNAME = os.getenv("SUPERSET_USERNAME")
+SUPERSET_PASSWORD = os.getenv("SUPERSET_PASSWORD")
 SUPERSET_PROVIDER = os.getenv("SUPERSET_PROVIDER", "db")
 SUPERSET_REFRESH = os.getenv("SUPERSET_REFRESH", "true")
 
-# Örnek DB Connection URI (Postgres)
-SQLALCHEMY_DATABASE_URI = (
-    "postgresql+psycopg2://Onur.Simsek:NVJzH6JSp371Nea@10.34.211.50:5432/superset"
-)
+# 3) SQLAlchemy URI
+SQLALCHEMY_DATABASE_URI = os.getenv("SQLALCHEMY_DATABASE_URI")
 engine = create_engine(SQLALCHEMY_DATABASE_URI)
 
-# FastAPI örneği
+# 4) FastAPI tanımlama
 app = FastAPI(
     title="My FastAPI for Superset",
     description="Flask kodlarının FastAPI uyarlaması",
     version="1.0.0"
 )
 
-
-
-# ------------------ CORS MIDDLEWARE EKLİYORUZ -----------------------
-# İstek yapılabilecek origin'leri burada belirtebilir veya allow_origins=["*"] ile tüm sitelere izin verebilirsiniz.
-# Güvenlik açısından üretim ortamında spesifik domain(ler) yazmanız tavsiye edilir.
+# CORS ayarları vs...
 origins = [
-    "http://10.34.211.143",       # Örneğin frontend'in çalıştığı domain
-    "http://10.34.211.143:3000",  # Veya React dev server portu vs.
-    "http://localhost:3000",      # Lokal geliştirirken
-]
+    "http://10.34.200.200",
+    "http://10.34.200.201",
+    "http://10.34.200.200:3000",
+    "http://10.34.200.201:3000",
+    "http://localhost:3000",
+    "http://10.34.200.202",
+    "http://10.34.200.203",
+    "http://yemvars-edvars.dedas.com.tr",
+    "http://iszekasi.dedas.com.tr",
 
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,            # veya ["*"] (güvenlik açısından dikkatli kullanın)
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],              # GET, POST, PUT, DELETE, OPTIONS
-    allow_headers=["*"],              # Authorization, Content-Type vs.
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# ------------------------------------------------------------------------------
-# 1) Superset'e Login Olarak Token Elde Etme Fonksiyonu
-# ------------------------------------------------------------------------------
+# 5) Superset Token alma fonksiyonu
 def get_superset_token() -> Optional[str]:
-    """
-    Superset login endpoint'ine giderek access_token döndürür.
-    Hata durumunda None döndürür.
-    """
-    login_url = "http://10.34.211.143/api/v1/security/login"
+    login_url = "http://10.34.200.200/api/v1/security/login"
     payload = {
         "username": SUPERSET_USERNAME,
         "password": SUPERSET_PASSWORD,
         "provider": SUPERSET_PROVIDER,
-        # refresh -> 'true' string ise True, aksi halde False
         "refresh": True if SUPERSET_REFRESH.lower() == "true" else False
     }
-    headers = {
-        "Content-Type": "application/json"
-    }
+    headers = {"Content-Type": "application/json"}
     try:
         response = requests.post(login_url, json=payload, headers=headers)
         if response.status_code == 200:
             data = response.json()
-            return data.get("access_token")  # access_token
+            return data.get("access_token")
         else:
             print(f"Token alma hatası: {response.status_code} - {response.text}")
             return None
@@ -84,14 +72,8 @@ def get_superset_token() -> Optional[str]:
         print(f"Token isteğinde istisna oluştu: {e}")
         return None
 
-# ------------------------------------------------------------------------------
-# 2) Test Endpoint
-# ------------------------------------------------------------------------------
 @app.get("/test")
 def test_api():
-    """
-    Basit test endpoint'i
-    """
     return {"message": "Test API is up and running!"}
 
 # ------------------------------------------------------------------------------
@@ -146,7 +128,7 @@ def get_menu_items():
 # 4) Dashboards Endpoint (Superset'ten Dashboard Listesi)
 # ------------------------------------------------------------------------------
 @app.get("/dashboards")
-def get_dashboards(page: int = 0, page_size: int = 1000):
+def get_dashboards(page: int = 1, page_size: int = 100000):
     """
     Superset'teki dashboard endpoint'ine GET isteği atar
     """
@@ -158,7 +140,7 @@ def get_dashboards(page: int = 0, page_size: int = 1000):
 
         # 2) Superset Dashboard endpoint URL'i
         url = (
-            f"http://10.34.211.143/api/v1/dashboard/"
+            f"http://10.34.200.200/api/v1/dashboard/"
             f"?q={{\"page\":{page},\"page_size\":{page_size}}}"
         )
 
@@ -197,7 +179,7 @@ def get_combined_data():
             raise HTTPException(status_code=500, detail="Superset token alınamadı.")
 
         # 2) Dashboards verisini çek - (Mevcut API'nizi local'den çağırıyoruz)
-        dashboards_url = "http://localhost:8000/dashboards?page=0&page_size=1000"
+        dashboards_url = "http://localhost:8005/dashboards?page=0&page_size=1000"
         #  Yukarıdaki port (7001) vs. projenize göre değişebilir.
         headers = {
             "Authorization": f"Bearer {token}",
@@ -223,7 +205,7 @@ def get_combined_data():
             dashboards_map[dash_id] = dash
 
         # 3) Menu Items verisini çek (kendi API'mız)
-        menu_items_url = "http://localhost:8000/menu_items"
+        menu_items_url = "http://localhost:8005/menu_items"
         menu_resp = requests.get(menu_items_url)
         if menu_resp.status_code != 200:
             raise HTTPException(
@@ -253,10 +235,11 @@ def get_combined_data():
 # ------------------------------------------------------------------------------
 # 6) Uygulama Çalıştırma (Geliştirme İçin)
 # ------------------------------------------------------------------------------
-# Eğer bu dosyayı doğrudan `python main.py` şeklinde çalıştıracaksanız:
+# Eğer bu dosyayı doğrudan python main.py şeklinde çalıştıracaksanız:
 #   uvicorn main:app --reload --port 7001  şeklinde de çalıştırabilirsiniz.
 # Aşağıdaki if bloğunu FastAPI'de genelde çok kullanmayız,
 # fakat yine de isterseniz ekleyebilirsiniz:
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("api:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("api:app", host="0.0.0.0", port=8005, reload=True)
+    

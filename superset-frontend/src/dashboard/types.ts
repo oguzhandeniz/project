@@ -241,6 +241,7 @@ export type Slice = {
 };
 
 export enum MenuKeys {
+  FullDataExportCsv = 'full_data_export_csv',
   DownloadAsImage = 'download_as_image',
   ExploreChart = 'explore_chart',
   ExportCsv = 'export_csv',
