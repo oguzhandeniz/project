@@ -699,11 +699,17 @@ def d3_to_excel_format(d3_format):
     D3 formatlarını Excel'e çevirir (',.2f' -> '#,##0.00' vb.)
     """
     format_map = {
-        ',.d': '#.##',
-        ',.0f': '#,##0',
-        ',.1f': '#,##0.0',
-        ',.2f': '#,##0.00',
-        ',.3f': '#,##0.000',
+        ',d': '#,##0',           # Integer with thousands separator
+        ',.d': '#,##0',          # Same as above
+        'd': '0',                # Plain integer
+        ',.0f': '#,##0',         # No decimal places, thousands separator
+        ',.1f': '#,##0.0',       # 1 decimal place, thousands separator
+        ',.2f': '#,##0.00',      # 2 decimal places, thousands separator
+        ',.3f': '#,##0.000',     # 3 decimal places, thousands separator
+        '.0f': '0',              # No decimal places, no thousands separator
+        '.1f': '0.0',            # 1 decimal place, no thousands separator
+        '.2f': '0.00',           # 2 decimal places, no thousands separator
+        '.3f': '0.000',          # 3 decimal places, no thousands separator
         '.0%': '0%',
         '.1%': '0.0%',
         '.2%': '0.00%',
@@ -713,7 +719,13 @@ def d3_to_excel_format(d3_format):
         ',.2%': '#,##0.00%',
         ',.3%': '#,##0.000%',
         '%d-%m-%Y %H:%M:%S': 'dd-mm-yyyy hh:mm:ss',
+        '%B': 'mmmm',            # Full month name (Mart, Nisan, etc.)
+        '%b': 'mmm',             # Abbreviated month name
+        '%Y': 'yyyy',            # 4-digit year
+        '%m': 'mm',              # 2-digit month
+        '%d': 'dd',              # 2-digit day
     }
+    
     date_time_pattern = re.compile(r'%[dmyHMS\- :]+')
     if date_time_pattern.fullmatch(d3_format):
         excel_format = d3_format.replace('%d', 'dd') \
@@ -725,6 +737,107 @@ def d3_to_excel_format(d3_format):
         return excel_format
     return format_map.get(d3_format, '#,##0')
 
+def _get_pivot_column_types(df, formdata):
+   
+    numeric_columns = []
+    datetime_columns = []
+    
+    
+    temporal_lookup = formdata.get('temporal_columns_lookup', {})
+    temporal_column_names = [col for col, is_temporal in temporal_lookup.items() if is_temporal]
+    
+    all_columns_to_check = list(df.columns)
+    
+    if hasattr(df.index, 'names') and df.index.names:
+        for index_name in df.index.names:
+            if index_name and index_name in temporal_column_names:
+                all_columns_to_check.append(index_name)
+    
+    if hasattr(df.index, 'levels'):
+        for level_idx, level_name in enumerate(df.index.names or []):
+            if level_name and level_name in temporal_column_names:
+                datetime_columns.extend([level_name])
+    
+    for col in df.columns:
+        
+        col_name = str(col) if not isinstance(col, tuple) else str(col)
+        is_temporal_column = any(temporal_col in col_name for temporal_col in temporal_column_names)
+        
+        if is_temporal_column:
+            datetime_columns.append(col)
+            continue
+            
+        try:
+           
+            sample_value = df[col].dropna().iloc[0] if not df[col].dropna().empty else None
+            
+            if sample_value is not None:
+                
+                if isinstance(sample_value, (int, float)) or str(sample_value).replace('.', '').replace('-', '').isdigit():
+                    numeric_columns.append(col)
+                elif hasattr(sample_value, 'year') or 'date' in str(type(sample_value)).lower():
+                    datetime_columns.append(col)
+        except (IndexError, AttributeError):
+            numeric_columns.append(col)
+    
+    for index_name in (df.index.names or []):
+        if index_name and index_name in temporal_column_names and index_name not in datetime_columns:
+            datetime_columns.append(index_name)
+
+    return numeric_columns, datetime_columns
+
+def get_pivot_column_formats(workbook,df, formdata,alignment_formats):
+    column_formats = {}
+    number_alignment_format_cache = {}
+    datetime_alignment_format_cache = {}
+    value_format = formdata.get('valueFormat', ',d')  # Default numeric format
+    date_format = formdata.get('date_format', '%B')   # Default date format (%B = month name)
+    default_align = 'left'
+    numeric_columns, datetime_columns = _get_pivot_column_types(df, formdata)
+    all_columns_for_excel = []
+    if hasattr(df.index, 'names') and df.index.names:
+        for index_name in df.index.names:
+            if index_name:  # Skip None names
+                all_columns_for_excel.append(index_name)
+    all_columns_for_excel.extend(list(df.columns))
+
+    for column in all_columns_for_excel:  
+        if column in datetime_columns:
+            # Use date_format for datetime columns
+            excel_format_str = d3_to_excel_format(date_format)
+            format_key = (excel_format_str, default_align)
+            if format_key not in datetime_alignment_format_cache:
+                datetime_alignment_format_cache[format_key] = workbook.add_format({
+                    'num_format': excel_format_str,
+                    'align': default_align,
+                    'valign': 'vcenter',
+                    'border': 1
+                })
+            column_formats[column] = datetime_alignment_format_cache[format_key]
+        elif column in numeric_columns:
+            # Use valueFormat for numeric columns (aggregated values)
+            excel_format_str = d3_to_excel_format(value_format)
+            format_key = (excel_format_str, default_align)
+            if format_key not in number_alignment_format_cache:
+                number_alignment_format_cache[format_key] = workbook.add_format({
+                    'num_format': excel_format_str,
+                    'align': default_align,
+                    'valign': 'vcenter',
+                    'border': 1
+                })
+            column_formats[column] = number_alignment_format_cache[format_key]
+        else:
+            # Default format for any other columns
+            column_formats[column] = alignment_formats.get(
+                default_align,
+                workbook.add_format({
+                    'border': 1,
+                    'align': default_align,
+                    'valign': 'vcenter'
+                })
+            )
+    
+    return column_formats
 
 def get_column_formats(workbook, df, formdata, alignment_formats):
     """
@@ -734,7 +847,6 @@ def get_column_formats(workbook, df, formdata, alignment_formats):
     column_config = formdata.get('column_config', {})
     number_alignment_format_cache = {}
     datetime_alignment_format_cache = {}
-
     numeric_columns = df.select_dtypes(include=['number']).columns.tolist()
     datetime_columns = df.select_dtypes(include=['datetime']).columns.tolist()
 
@@ -1207,6 +1319,117 @@ def addHorizontalTable(writer, df, queryContext, start_row=0, **kwargs):
     return current_row
 
 
+def addPivotTable(writer, df, queryContext, start_row=0, **kwargs):
+    formdata = queryContext.form_data
+    workbook = writer.book
+    worksheet = writer.sheets['Sheet1']
+    cell_format_with_borders = workbook.add_format({'border': 1})
+    null_format = workbook.add_format({'border': 1})
+    alignment_formats = {}
+    for align in ['left', 'center', 'right']:
+        alignment_formats[align] = workbook.add_format({
+            'border': 1,
+            'align': align,
+            'valign': 'vcenter'
+        })
+
+    column_formats = get_pivot_column_formats(workbook, df, formdata, alignment_formats)
+
+    # First, write the data using pandas native method to get proper merging
+    df.to_excel(writer, index=True, startrow=start_row, header=True, sheet_name='Sheet1')
+
+    # Now apply custom formatting to the written cells
+    worksheet = writer.sheets['Sheet1']
+
+    # Calculate the actual range of written data
+    num_index_cols = len(df.index.names) if hasattr(df.index, 'names') and df.index.names else 1
+    num_data_cols = len(df.columns)
+    num_rows = len(df) + 1  # +1 for header row
+
+    # Apply formatting to header row
+    header_row = start_row
+    col_num = 0
+
+    # Format index column headers
+    if hasattr(df.index, 'names') and df.index.names:
+        index_names = [name for name in df.index.names if name is not None]
+        for index_name in index_names:
+            header_format = column_formats.get(index_name, cell_format_with_borders)
+            # Read existing value and rewrite with format
+            try:
+                existing_value = worksheet._get_cell(header_row, col_num).value if hasattr(worksheet, '_get_cell') else str(index_name)
+            except:
+                existing_value = str(index_name)
+            worksheet.write(header_row, col_num, existing_value or str(index_name), header_format)
+            col_num += 1
+
+    # Format data column headers
+    for col_name in df.columns:
+        header_format = column_formats.get(col_name, cell_format_with_borders)
+        # Handle MultiIndex column names
+        if isinstance(col_name, tuple):
+            display_name = ' '.join(str(x) for x in col_name if x is not None)
+        else:
+            display_name = str(col_name)
+        worksheet.write(header_row, col_num, display_name, header_format)
+        col_num += 1
+
+    # Apply formatting to data cells (preserve existing values, just change format)
+    for row_num in range(len(df)):
+        cell_row = start_row + 1 + row_num
+        col_num = 0
+        
+        # Format index columns
+        if hasattr(df.index, 'names') and df.index.names:
+            index_names = [name for name in df.index.names if name is not None]
+            
+            if isinstance(df.index, pd.MultiIndex):
+                current_index_values = list(df.index[row_num])
+            else:
+                current_index_values = [df.index[row_num]]
+            
+            for level_num, (index_name, current_value) in enumerate(zip(index_names, current_index_values)):
+                fmt = column_formats.get(index_name, cell_format_with_borders)
+                
+                # Get the existing cell value (might be empty due to merging)
+                try:
+                    existing_cell = worksheet._get_cell(cell_row, col_num) if hasattr(worksheet, '_get_cell') else None
+                    existing_value = existing_cell.value if existing_cell else current_value
+                except:
+                    existing_value = current_value
+                
+                # Only rewrite if there's an actual value (respect pandas merging)
+                if existing_value is not None and str(existing_value).strip():
+                    val = existing_value
+                    if isinstance(val, pd.Timestamp):
+                        worksheet.write_datetime(cell_row, col_num, val, fmt)
+                    elif isinstance(val, numbers.Number):
+                        worksheet.write_number(cell_row, col_num, val, fmt)
+                    else:
+                        worksheet.write(cell_row, col_num, val, fmt)
+                else:
+                    # Apply format to empty/merged cells
+                    worksheet.write_blank(cell_row, col_num, None, fmt)
+                
+                col_num += 1
+        
+        # Format data columns
+        row_data = df.iloc[row_num]
+        for data_col_num, (col_name, value) in enumerate(row_data.items()):
+            cell_col = col_num + data_col_num
+            val = value
+            fmt = column_formats.get(col_name, cell_format_with_borders)
+
+            if pd.isna(val):
+                worksheet.write_blank(cell_row, cell_col, None, null_format)
+            elif isinstance(val, tuple):
+                worksheet.write_url(cell_row, cell_col, val[0], string=val[1], cell_format=link_format)
+            elif isinstance(val, pd.Timestamp):
+                worksheet.write_datetime(cell_row, cell_col, val, fmt)
+            elif isinstance(val, numbers.Number):
+                worksheet.write_number(cell_row, cell_col, val, fmt)
+            else:
+                worksheet.write(cell_row, cell_col, val, fmt)
 ###############################################################################
 # GRUPSUZ TABLO
 ###############################################################################
@@ -1365,6 +1588,8 @@ def create_excel_for_dashboard(dataframes, **kwargs) -> Any:
                         chart['query_context'],
                         start_row
                     ) + 1
+                elif form_data.get('viz_type','') == 'pivot_table_v2':
+                    addPivotTable(writer, chart['dataframe'], chart['query_context'], start_row)
                 else:
                     # Gruplama yok
                     addTablewithoutgrouping(writer, chart['dataframe'], chart['query_context'], start_row)
