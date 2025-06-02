@@ -1,89 +1,148 @@
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
-#
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an
-# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-# KIND, either express or implied.  See the License for the
-# specific language governing permissions and limitations
-# under the License.
+# -*- coding: utf-8 -*-
+# Tek Python dosyası içinde hem RAW hem AGGREGATE (2 DF, GENEL TOPLAM) Excel çıktısı
 
 import io
-import numbers
-from typing import Any, List, Dict
-import pandas as pd
 import re
 import math
-import numpy as np
 import logging
-logging.disable(logging.CRITICAL)  
+import numbers
+import traceback
+import numpy as np
+import pandas as pd
+
+from typing import Any, List, Dict
 from html.parser import HTMLParser
 from superset.charts.post_processing import table
 from xlsxwriter.utility import xl_range
 
-# İstediğiniz şekilde özelleştirebilirsiniz
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-logger.disabled = True   
-
-ch = logging.StreamHandler()
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-ch.setFormatter(formatter)
-# logger.addHandler(ch)
+logging.disable(logging.CRITICAL)
 
 ###############################################################################
-# TEMEL FONKSİYONLAR
+# 1) TEMEL FONKSİYONLAR
 ###############################################################################
 def df_to_excel(df: pd.DataFrame, **kwargs: Any) -> Any:
-    """
-    Basit DataFrame -> Excel çevirimi.
-    Superset'te ya da test ortamında kullanılabilir.
-    """
     output = io.BytesIO()
-    # timezones are not supported
     for column in df.select_dtypes(include=["datetimetz"]).columns:
         df[column] = df[column].astype(str)
 
     with pd.ExcelWriter(
         output,
         engine="xlsxwriter",
-        engine_kwargs={'options': {'nan_inf_to_errors': False}}  # NaN/Inf hatalarını baskılar
+        engine_kwargs={'options': {'nan_inf_to_errors': False}}
     ) as writer:
         df.to_excel(writer, **kwargs)
 
     return output.getvalue()
 
-
 def pixels_to_excel_width(pixels):
-    """
-    Piksel genişliğini Excel sütun genişliğine dönüştürür.
-    İsterseniz buradaki çarpanları değiştirebilirsiniz.
-    """
     return (pixels - 5) / 7 + 1
 
 
 ###############################################################################
-# ADDHEADER MAKRONU İÇİN YENİ YARDIMCI FONKSİYONLAR
+# 2) GENEL TOPLAM İÇİN YENİ HELPER FONKSİYONLAR (AGGREGATE TARAFI)
+###############################################################################
+def build_grand_total_df(df: pd.DataFrame, label: str = "GENEL TOPLAM") -> pd.DataFrame:
+    numeric_cols = df.select_dtypes(include=["number"]).columns
+    totals = df[numeric_cols].sum(numeric_only=True)
+
+    grand_total = pd.DataFrame(columns=df.columns)
+    for col in numeric_cols:
+        grand_total.loc[0, col] = totals[col]
+
+    dimension_cols = [c for c in df.columns if c not in numeric_cols]
+    for col in dimension_cols:
+        grand_total.loc[0, col] = ""
+
+    if dimension_cols:
+        grand_total.loc[0, dimension_cols[0]] = label
+    elif len(df.columns) > 0:
+        grand_total.iloc[0, 0] = label
+
+    grand_total.fillna("", inplace=True)
+    return grand_total
+
+def is_aggregate_chart(queryContext) -> bool:
+    fd = queryContext.form_data
+    return fd.get("query_mode") == "aggregate"
+
+
+###############################################################################
+# 2.1) YENİLEME YAPILAN FONKSİYON (AGGREGATE: GENEL TOPLAM)
+###############################################################################
+def add_right_shifted_table(
+    writer: pd.ExcelWriter,
+    df: pd.DataFrame,      # tek satırlık veya birkaç satırlık DataFrame beklenebilir
+    queryContext,
+    start_row: int,
+    label: str = "GENEL TOPLAM"
+) -> int:
+    """
+    1) 'start_row' satırına ilk sütun = label (ör. GENEL TOPLAM)
+    2) Kalan veriyi tek tek, sütun bazlı D3 format (num_format) ve alignment kurallarına göre yaz.
+    3) Dönüş: yazılan son satır index'i.
+    
+    Bu fonksiyon da, her kolona ait normal/bold formatlardan "normal" versiyonu kullanır.
+    'label' hücresi ise ayrıca bold format eklenmiştir.
+    """
+
+    from pandas.api.types import is_datetime64_any_dtype
+
+    convert_html_links(df)
+    df = clean_dataframe(df).applymap(lambda x: safe_value(x) if not pd.isna(x) else x)
+
+    sheet = writer.sheets["Sheet1"]
+    wb = writer.book
+
+    # 1) Label'ı yaz (bold)
+    label_fmt = wb.add_format({
+        "bold": True,
+        "border": 1,
+        "align": "left",
+        "valign": "vcenter"
+    })
+    sheet.write(start_row, 0, label, label_fmt)
+
+    # 2) Kolon bazlı format çiftlerini oluştur
+    formdata = queryContext.form_data if queryContext else {}
+    alignment_formats = {
+        'left':   wb.add_format({'border': 1, 'align': 'left',   'valign': 'vcenter'}),
+        'center': wb.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'}),
+        'right':  wb.add_format({'border': 1, 'align': 'right',  'valign': 'vcenter'})
+    }
+
+    # -- BURADA ESKİ get_column_formats YERİNE, ÇİFT FORMAT OLUŞTURUYORUZ:
+    column_formats_pair = get_column_formats_pair(wb, df, formdata, alignment_formats)
+
+    # 3) DataFrame hücrelerini uygun formatlarla yaz
+    for r in range(len(df)):
+        for c in range(len(df.columns)):
+            val = df.iat[r, c]
+            col_name = df.columns[c]
+
+            # GENEL TOPLAM satırı istenirse bold da yapabilirsiniz;
+            # burada örnek olarak normal format kullanalım
+            fmt = column_formats_pair[col_name]["normal"]
+
+            if pd.isna(val):
+                sheet.write_blank(start_row + r, c, None, fmt)
+            elif isinstance(val, numbers.Number):
+                sheet.write_number(start_row + r, c, val, fmt)
+            elif isinstance(val, pd.Timestamp) or (is_datetime64_any_dtype(type(val))):
+                sheet.write_datetime(start_row + r, c, val, fmt)
+            elif isinstance(val, tuple) and len(val) == 2:
+                sheet.write_url(start_row + r, c, val[0], string=val[1], cell_format=fmt)
+            else:
+                sheet.write(start_row + r, c, val, fmt)
+
+    return start_row + len(df)
+
+
+###############################################################################
+# 3) GRUPLU KOLON PARSE / ADDHEADER vb. (Mevcut Kod)
 ###############################################################################
 def parse_add_header_instructions(markdown_content: str):
-    """
-    Örnek AddHeader kullanımı:
-      [AddHeader:"Kabul Edilen Yatırım Harcaması",A1,F1]
-      [AddHeader:"Yıllar",A3,F3]
-      [AddHeader:" ",A4]
-      vb.
-
-    Dönüş: (temizlenmiş_markdown, [ { 'text':..., 'start_cell':..., 'end_cell':... }, ... ])
-    """
     pattern = re.compile(
-    r'\[AddHeader:"(.*?)"(?:,([A-Za-z]+\d+)(?:,([A-Za-z]+\d+))?)?\]'
+        r'\[AddHeader:"(.*?)"(?:,([A-Za-z]+\d+)(?:,([A-Za-z]+\d+))?)?\]'
     )
     instructions = []
 
@@ -96,86 +155,54 @@ def parse_add_header_instructions(markdown_content: str):
             'start_cell': start_cell,
             'end_cell': end_cell
         })
-        return ''  # Bu makroyu Markdown'dan tamamen çıkar (görünmesin)
+        return ''  
 
     cleaned_text = pattern.sub(replace_func, markdown_content)
     return cleaned_text.strip(), instructions
 
-
 def apply_add_header_instructions(worksheet, workbook, instructions):
-    """
-    instructions: [
-      { 'text': 'Kabul Edilen Yatırım...', 'start_cell': 'A1', 'end_cell': 'F1' },
-      { 'text': 'Yıllar', 'start_cell': 'A3', 'end_cell': 'F3' },
-      ...
-    ]
-    """
     merge_format = workbook.add_format({
         'bold': True,
         'align': 'center',
         'valign': 'vcenter',
         'text_wrap': True,
-         'border': 1
+        'border': 1
     })
-
     single_format = workbook.add_format({
         'bold': True,
         'align': 'left',
         'valign': 'vcenter',
         'text_wrap': True,
-         'border': 1
+        'border': 1
     })
 
     for inst in instructions:
         text = inst['text']
         start_cell = inst['start_cell']
         end_cell = inst['end_cell']
-
         if not start_cell:
-            # Eğer A1 gibi başlangıç hücresi bile verilmediyse, skip
             continue
-
         start_row, start_col = excel_cell_to_indices(start_cell)
+
         if end_cell:
             end_row, end_col = excel_cell_to_indices(end_cell)
-            # Merge işlemi
             try:
                 worksheet.merge_range(start_row, start_col, end_row, end_col, text, merge_format)
             except Exception as e:
                 if "overlaps" in str(e):
-                    # logger.warning(f"AddHeader çakışma uyarısı: Merge range '{start_cell}:{end_cell}' overlaps. Geçiliyor.")
-                    pass                   
+                    print("[WARNING] Overlapping AddHeader merge:", e)
                 else:
                     raise
         else:
-            # Tek hücre
             try:
                 worksheet.write(start_row, start_col, text, single_format)
             except Exception as e:
                 if "overlaps" in str(e):
-                    # logger.warning(f"AddHeader çakışma uyarısı: Hücre '{start_cell}' overlaps. Geçiliyor.")
-                    pass                   
+                    print("[WARNING] Overlapping single-cell AddHeader:", e)
                 else:
                     raise
 
-
-###############################################################################
-# GRUPLU KOLON PARSE FONKSİYONU
-###############################################################################
 def parse_grouped_columns(column_config: Dict[str, Any]) -> Dict:
-    """
-    Superset'teki 'groups' parametresini hiyerarşik bir sözlüğe dönüştürür.
-    Örnek:
-       "city": {"groups": "Country, Region"}
-    =>
-       {
-         "Country": {
-           "Region": {
-             "city": None
-           }
-         }
-       }
-    """
     grouped_columns = {}
     for col, config in column_config.items():
         if 'groups' in config and config['groups']:
@@ -189,11 +216,7 @@ def parse_grouped_columns(column_config: Dict[str, Any]) -> Dict:
             current[col] = None
     return grouped_columns
 
-
 def calculate_max_depth(grouped_columns: Dict) -> int:
-    """
-    Yukarıda parse_grouped_columns ile oluşan sözlüğün en derin seviyesini döndürür.
-    """
     def depth(d):
         if isinstance(d, dict) and d:
             return 1 + max(depth(v) for v in d.values())
@@ -201,30 +224,17 @@ def calculate_max_depth(grouped_columns: Dict) -> int:
             return 0
     return depth(grouped_columns)
 
-
-###############################################################################
-# EXCEL HÜCRE İNDEKS DÖNÜŞÜMLERİ
-###############################################################################
 def indices_to_excel_cell(row_idx: int, col_idx: int) -> str:
-    """
-    (0-based) row, col indekslerini -> 'A1', 'B2' gibi Excel hücre referansına çevirir.
-    Örnek: (0, 0) -> A1, (0, 1) -> B1, (10, 0) -> A11
-    """
     col_ref = ""
     c = col_idx
     while c >= 0:
         r = c % 26
         col_ref = chr(r + ord('A')) + col_ref
         c = (c // 26) - 1
-
-    row_ref = str(row_idx + 1)  # Excel satırları 1'den başlar
+    row_ref = str(row_idx + 1)
     return f"{col_ref}{row_ref}"
 
-
 def excel_cell_to_indices(cell: str) -> tuple[int, int]:
-    """
-    'A1' gibi Excel hücre adresini (row, col) şeklinde integer indekslere çevirir (0-tabanlı).
-    """
     match = re.match(r"([A-Za-z]+)(\d+)", cell)
     if not match:
         raise ValueError(f"Geçersiz hücre adresi: {cell}")
@@ -236,16 +246,7 @@ def excel_cell_to_indices(cell: str) -> tuple[int, int]:
     column -= 1
     return row, column
 
-
-###############################################################################
-# MARKDOWN/HEADER YORUMLAMA ve RENK/POZİSYON DİREKTİFLERİ
-###############################################################################
 def parse_position_syntax(markdown_content: str) -> tuple[str, str, str]:
-    """
-    [Position:A1,B2] gibi bir ifade varsa, 
-    (temizlenmiş_metin, 'A1', 'B2') döndürür.
-    Yoksa (orijinal_metin, None, None).
-    """
     pattern = re.compile(r"\[Position:([A-Za-z]+\d+),([A-Za-z]+\d+)\]")
     match = pattern.search(markdown_content)
     if match:
@@ -254,11 +255,7 @@ def parse_position_syntax(markdown_content: str) -> tuple[str, str, str]:
         return cleaned_markdown, start_cell, end_cell
     return markdown_content, None, None
 
-
 def parse_background_color_syntax(markdown_content: str) -> tuple[str, List[Dict]]:
-    """
-    [BackgroundColor:#FF0000,A1,B2] varsa yakalar.
-    """
     pattern = re.compile(r"\[BackgroundColor:(#[0-9A-Fa-f]{6}),([A-Za-z]+\d+),([A-Za-z]+\d+)\]")
     matches = pattern.findall(markdown_content)
     background_colors = []
@@ -272,11 +269,7 @@ def parse_background_color_syntax(markdown_content: str) -> tuple[str, List[Dict
     cleaned_markdown = pattern.sub('', markdown_content).strip()
     return cleaned_markdown, background_colors
 
-
 def parse_font_color_syntax(markdown_content: str) -> tuple[str, List[Dict]]:
-    """
-    [FontColor:#00FF00,A1,B2] gibi font renk direktiflerini parse eder.
-    """
     pattern = re.compile(r"\[FontColor:(#[0-9A-Fa-f]{6}),([A-Za-z]+\d+),([A-Za-z]+\d+)\]")
     matches = pattern.findall(markdown_content)
     font_colors = []
@@ -292,12 +285,9 @@ def parse_font_color_syntax(markdown_content: str) -> tuple[str, List[Dict]]:
 
 
 ###############################################################################
-# HTML -> RICH STRING PARSE (B, I, U, SPAN, H1/H2/H3, BR, P, DIV...)
+# 4) HTML -> RICH STRING PARSE
 ###############################################################################
 class RichStringHTMLParser(HTMLParser):
-    """
-    HTML etiketlerini XlsxWriter'ın write_rich_string formatına dönüştürür.
-    """
     def __init__(self, workbook):
         super().__init__()
         self.workbook = workbook
@@ -314,7 +304,6 @@ class RichStringHTMLParser(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
-        # <b> / <strong>
         if tag in ['strong', 'b']:
             fmt = {'bold': True}
             self.format_stack.append(fmt)
@@ -325,7 +314,6 @@ class RichStringHTMLParser(HTMLParser):
             fmt = {'underline': True}
             self.format_stack.append(fmt)
         elif tag == 'span':
-            # style="color: #FF0000"
             style = attrs.get('style', '')
             color_match = re.search(r'color\s*:\s*(#[0-9a-fA-F]{6}|[a-zA-Z]+)', style, re.IGNORECASE)
             fmt = {}
@@ -338,20 +326,17 @@ class RichStringHTMLParser(HTMLParser):
             if fmt:
                 self.format_stack.append(fmt)
         elif tag == 'div':
-            # style="text-align:center"
             style = attrs.get('style', '')
             align_match = re.search(r'text-align\s*:\s*(left|center|right)', style, re.IGNORECASE)
             if align_match:
                 alignment = align_match.group(1)
                 self.cell_format = {'align': alignment, 'valign': 'vcenter'}
         elif tag == 'p':
-            # Paragraf
             self.format_stack.append(self.paragraph_format.copy())
         elif tag == 'br':
-            self.rich_string.append('\n')  # Yeni satır
+            self.rich_string.append('\n')
 
     def handle_endtag(self, tag):
-        # Format stack'ten pop
         if tag in ['strong', 'b', 'i', 'u', 'span', 'h1', 'h2', 'h3', 'p']:
             if self.format_stack:
                 self.format_stack.pop()
@@ -368,12 +353,7 @@ class RichStringHTMLParser(HTMLParser):
                 self.rich_string.append(xlsx_format)
             self.rich_string.append(data)
 
-
 def parse_html_to_rich_string(workbook, html_content):
-    """
-    HTML içeriğini RichStringHTMLParser ile parse eder.
-    Döndürür: (alignment_format_dict, [rich_string_dizisi])
-    """
     parser = RichStringHTMLParser(workbook)
     parser.feed(html_content)
     parser.close()
@@ -381,38 +361,21 @@ def parse_html_to_rich_string(workbook, html_content):
 
 
 ###############################################################################
-# HEADERS / MARKDOWN EKLEME
+# 5) HEADERS / MARKDOWN EKLEME
 ###############################################################################
 def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, workbook):
-    """
-    Tek satır veya liste şeklindeki 'content' i Excel'e yazar.
-    - [AddHeader:"Text",A1,F1] makrosu parse edilir ve işlenir.
-    - [Position:A1,B2] vb. syntax'ı parse ederek istenen aralığa merge eder.
-    - [BackgroundColor:...], [FontColor:...] direktiflerini uygular.
-    - HTML parse edilip write_rich_string ile hücreye yazdırılabilir.
-    - max_columns > 1 ise, tek satır için yatay merge yapılır.
-    - Dönüş: Excel'de yazıldıktan sonraki "next row" değeri.
-    """
     if isinstance(content, str):
-        # ÖNCE: AddHeader makrolarını parse edelim
         cleaned_content, add_header_instructions = parse_add_header_instructions(content)
-        # Bulduğumuz AddHeader’ları hemen uygula (merge vb.)
         apply_add_header_instructions(worksheet, workbook, add_header_instructions)
 
-        # 1) Position
         cleaned_content, start_cell, end_cell = parse_position_syntax(cleaned_content)
-        # 2) Background
         cleaned_content, background_colors = parse_background_color_syntax(cleaned_content)
-        # 3) Font color
         cleaned_content, font_colors = parse_font_color_syntax(cleaned_content)
-        # 4) HTML -> rich string
         alignment_format, rich_string = parse_html_to_rich_string(workbook, cleaned_content)
 
-        # Pozisyona göre merge mi?
         if start_cell and end_cell:
             start_row_idx, start_col = excel_cell_to_indices(start_cell)
             end_row_idx, end_col = excel_cell_to_indices(end_cell)
-
             merged_format = workbook.add_format({
                 'align': alignment_format.get('align', 'left') if alignment_format else 'left',
                 'valign': alignment_format.get('valign', 'vcenter') if alignment_format else 'vcenter',
@@ -422,8 +385,7 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                 worksheet.merge_range(start_row_idx, start_col, end_row_idx, end_col, '', merged_format)
             except Exception as e:
                 if "overlaps" in str(e):
-                    # logger.warning(f"add_header_or_markdown çakışma uyarısı: '{start_cell}:{end_cell}' overlaps. Geçiliyor.")
-                    pass                   
+                    print("[WARNING] Overlapping position syntax:", e)
                 else:
                     raise
 
@@ -432,7 +394,6 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
             else:
                 worksheet.write(start_row_idx, start_col, cleaned_content, merged_format)
 
-            # Arka plan rengi
             for bg in background_colors:
                 color = bg['color']
                 bg_start_row, bg_start_col = excel_cell_to_indices(bg['start_cell'])
@@ -442,7 +403,6 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                     'type': 'no_errors',
                     'format': bg_format
                 })
-            # Yazı rengi
             for fc in font_colors:
                 color = fc['color']
                 fc_start_row, fc_start_col = excel_cell_to_indices(fc['start_cell'])
@@ -453,12 +413,10 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                     'format': fc_format
                 })
 
-            return end_row_idx + 1  # Bir sonraki uygun satır
+            return end_row_idx + 1
 
         else:
-            # Tek satır merge veya normal yaz
             if '<' in cleaned_content and '>' in cleaned_content:
-                # HTML parse edildiyse rich_string
                 if max_columns > 1:
                     merged_format = workbook.add_format({
                         'align': alignment_format.get('align', 'left') if alignment_format else 'left',
@@ -469,11 +427,9 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                         worksheet.merge_range(row, 0, row, max_columns - 1, '', merged_format)
                     except Exception as e:
                         if "overlaps" in str(e):
-                            # logger.warning(f"add_header_or_markdown çakışma uyarısı: '{row},0 -> {row},{max_columns-1}' overlaps. Geçiliyor.")
-                            pass                   
+                            print("[WARNING] Overlapping single row merge:", e)
                         else:
                             raise
-
                     if rich_string:
                         worksheet.write_rich_string(row, 0, *rich_string, merged_format)
                     else:
@@ -481,20 +437,20 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                 else:
                     single_format = workbook.add_format({
                         'align': alignment_format.get('align', 'left') if alignment_format else 'left',
-                        'valign': alignment_format.get('valign', 'vcenter') if alignment_format else 'vcenter',
+                        'valign': 'vcenter',
                         'text_wrap': True
                     })
-                    worksheet.write_rich_string(row, 0, *rich_string, single_format) if rich_string else \
+                    if rich_string:
+                        worksheet.write_rich_string(row, 0, *rich_string, single_format)
+                    else:
                         worksheet.write(row, 0, cleaned_content, single_format)
             else:
-                # Düz metin
                 if max_columns > 1:
                     try:
                         worksheet.merge_range(row, 0, row, max_columns - 1, cleaned_content, cell_format)
                     except Exception as e:
                         if "overlaps" in str(e):
-                            # logger.warning(f"add_header_or_markdown çakışma uyarısı: '{row},0 -> {row},{max_columns-1}' overlaps. Geçiliyor.")
-                            pass                   
+                            print("[WARNING] Overlapping single row text merge:", e)
                         else:
                             raise
                 else:
@@ -503,7 +459,6 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
             row_height = 20 * (cleaned_content.count('\n') + 1)
             worksheet.set_row(row, row_height)
 
-            # Renk direktiflerini uygulayalım
             for bg in background_colors:
                 color = bg['color']
                 bg_start_row, bg_start_col = excel_cell_to_indices(bg['start_cell'])
@@ -526,8 +481,6 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
             return row + 2
 
     elif isinstance(content, list):
-        # Liste halinde satır satır yazma
-        # (İsterseniz AddHeader parse işlemini her satırda da uygulayabilirsiniz.)
         for line in content:
             cleaned_line, add_header_instructions = parse_add_header_instructions(line)
             apply_add_header_instructions(worksheet, workbook, add_header_instructions)
@@ -542,15 +495,14 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                 end_row_idx, end_col = excel_cell_to_indices(end_cell)
                 merged_format = workbook.add_format({
                     'align': alignment_format.get('align', 'left') if alignment_format else 'left',
-                    'valign': alignment_format.get('valign', 'vcenter') if alignment_format else 'vcenter',
+                    'valign': alignment_format.get('valign', 'vcenter'),
                     'text_wrap': True
                 })
                 try:
                     worksheet.merge_range(start_row_idx, start_col, end_row_idx, end_col, '', merged_format)
                 except Exception as e:
                     if "overlaps" in str(e):
-                        # logger.warning(f"add_header_or_markdown çakışma uyarısı (liste): '{start_cell}:{end_cell}' overlaps. Geçiliyor.")
-                        pass                   
+                        print("[WARNING] Overlapping list merge:", e)
                     else:
                         raise
 
@@ -559,7 +511,6 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                 else:
                     worksheet.write(start_row_idx, start_col, cleaned_line, merged_format)
 
-                # Renk uygulama
                 for bg in background_colors:
                     color = bg['color']
                     bg_start_row, bg_start_col = excel_cell_to_indices(bg['start_cell'])
@@ -585,18 +536,16 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                     if max_columns > 1:
                         merged_format = workbook.add_format({
                             'align': alignment_format.get('align', 'left') if alignment_format else 'left',
-                            'valign': alignment_format.get('valign', 'vcenter') if alignment_format else 'vcenter',
+                            'valign': alignment_format.get('valign', 'vcenter'),
                             'text_wrap': True
                         })
                         try:
                             worksheet.merge_range(row, 0, row, max_columns - 1, '', merged_format)
                         except Exception as e:
                             if "overlaps" in str(e):
-                                # logger.warning(f"add_header_or_markdown çakışma uyarısı (liste HTML): '{row},0 -> {row},{max_columns-1}' overlaps. Geçiliyor.")
-                                pass                   
+                                print("[WARNING] Overlapping list HTML merge:", e)
                             else:
                                 raise
-
                         if rich_string:
                             worksheet.write_rich_string(row, 0, *rich_string, merged_format)
                         else:
@@ -616,8 +565,7 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                             worksheet.merge_range(row, 0, row, max_columns - 1, cleaned_line, cell_format)
                         except Exception as e:
                             if "overlaps" in str(e):
-                                # logger.warning(f"add_header_or_markdown çakışma uyarısı (liste düz): '{row},0 -> {row},{max_columns-1}' overlaps. Geçiliyor.")
-                                pass                   
+                                print("[WARNING] Overlapping list text merge:", e)
                             else:
                                 raise
                     else:
@@ -626,7 +574,6 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                 row_height = 20 * (cleaned_line.count('\n') + 1)
                 worksheet.set_row(row, row_height)
 
-                # Renk uygulama
                 for bg in background_colors:
                     color = bg['color']
                     bg_start_row, bg_start_col = excel_cell_to_indices(bg['start_cell'])
@@ -645,25 +592,20 @@ def add_header_or_markdown(worksheet, row, content, max_columns, cell_format, wo
                         'type': 'no_errors',
                         'format': fc_format
                     })
-
                 row += 1
 
         return row
 
 
 ###############################################################################
-# VERİ HAZIRLAMA, TEMİZLEME, FORMATLAMA
+# 6) VERİ DÖNÜŞÜM, FORMAT, DUPLICATE GİDERME vb.
 ###############################################################################
 def convert_html_links(df):
-    """
-    <a href="...">metin</a> -> (url, 'metin') dönüştürmesi.
-    """
     anchor_tag_pattern = re.compile(r'<a href="(.*?)">(.*?)</a>')
     for col in df.columns:
         df[col] = df[col].apply(
             lambda x: convert_anchor_to_link(x, anchor_tag_pattern) if isinstance(x, str) else x
         )
-
 
 def convert_anchor_to_link(text, pattern):
     match = pattern.search(text)
@@ -673,11 +615,7 @@ def convert_anchor_to_link(text, pattern):
         return (url, display_text)
     return text
 
-
 def safe_value(value):
-    """
-    NaN/Inf gibi değerleri metne çevirir.
-    """
     if isinstance(value, (float, np.floating)):
         if math.isnan(value) or np.isnan(value):
             return ''
@@ -685,31 +623,17 @@ def safe_value(value):
             return 'Infinity' if value > 0 else '-Infinity'
     return value
 
-
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Inf -> NaN dönüştürme vs.
-    """
     df = df.replace([np.inf, -np.inf], np.nan)
     return df
 
-
 def d3_to_excel_format(d3_format):
-    """
-    D3 formatlarını Excel'e çevirir (',.2f' -> '#,##0.00' vb.)
-    """
     format_map = {
-        ',d': '#,##0',           # Integer with thousands separator
-        ',.d': '#,##0',          # Same as above
-        'd': '0',                # Plain integer
-        ',.0f': '#,##0',         # No decimal places, thousands separator
-        ',.1f': '#,##0.0',       # 1 decimal place, thousands separator
-        ',.2f': '#,##0.00',      # 2 decimal places, thousands separator
-        ',.3f': '#,##0.000',     # 3 decimal places, thousands separator
-        '.0f': '0',              # No decimal places, no thousands separator
-        '.1f': '0.0',            # 1 decimal place, no thousands separator
-        '.2f': '0.00',           # 2 decimal places, no thousands separator
-        '.3f': '0.000',          # 3 decimal places, no thousands separator
+        ',.d': '#.##',
+        ',.0f': '#,##0',
+        ',.1f': '#,##0.0',
+        ',.2f': '#,##0.00',
+        ',.3f': '#,##0.000',
         '.0%': '0%',
         '.1%': '0.0%',
         '.2%': '0.00%',
@@ -719,23 +643,18 @@ def d3_to_excel_format(d3_format):
         ',.2%': '#,##0.00%',
         ',.3%': '#,##0.000%',
         '%d-%m-%Y %H:%M:%S': 'dd-mm-yyyy hh:mm:ss',
-        '%B': 'mmmm',            # Full month name (Mart, Nisan, etc.)
-        '%b': 'mmm',             # Abbreviated month name
-        '%Y': 'yyyy',            # 4-digit year
-        '%m': 'mm',              # 2-digit month
-        '%d': 'dd',              # 2-digit day
     }
-    
     date_time_pattern = re.compile(r'%[dmyHMS\- :]+')
     if date_time_pattern.fullmatch(d3_format):
-        excel_format = d3_format.replace('%d', 'dd') \
-                                .replace('%m', 'mm') \
-                                .replace('%Y', 'yyyy') \
-                                .replace('%H', 'hh') \
-                                .replace('%M', 'mm') \
-                                .replace('%S', 'ss')
+        excel_format = (d3_format.replace('%d', 'dd')
+                                  .replace('%m', 'mm')
+                                  .replace('%Y', 'yyyy')
+                                  .replace('%H', 'hh')
+                                  .replace('%M', 'mm')
+                                  .replace('%S', 'ss'))
         return excel_format
     return format_map.get(d3_format, '#,##0')
+
 
 def _get_pivot_column_types(df, formdata):
    
@@ -839,389 +758,344 @@ def get_pivot_column_formats(workbook,df, formdata,alignment_formats):
     
     return column_formats
 
-def get_column_formats(workbook, df, formdata, alignment_formats):
-    """
-    Sütuna göre (numeric, datetime, vs.) formatları (d3NumberFormat, horizontalAlign) uygular.
-    """
-    column_formats = {}
-    column_config = formdata.get('column_config', {})
-    number_alignment_format_cache = {}
-    datetime_alignment_format_cache = {}
-    numeric_columns = df.select_dtypes(include=['number']).columns.tolist()
-    datetime_columns = df.select_dtypes(include=['datetime']).columns.tolist()
-
-    for column in df.columns:
-        config = column_config.get(column, {})
-        d3_format = config.get('d3NumberFormat')
-        horizontal_align = config.get('horizontalAlign', 'left')
-
-        if d3_format and column in numeric_columns:
-            excel_format_str = d3_to_excel_format(d3_format)
-            format_key = (excel_format_str, horizontal_align)
-            if format_key not in number_alignment_format_cache:
-                number_alignment_format_cache[format_key] = workbook.add_format({
-                    'num_format': excel_format_str,
-                    'align': horizontal_align,
-                    'valign': 'vcenter',
-                    'border': 1
-                })
-            column_formats[column] = number_alignment_format_cache[format_key]
-        elif column in datetime_columns:
-            d3_format = config.get('d3NumberFormat', '%d-%m-%Y %H:%M:%S')
-            excel_format_str = d3_to_excel_format(d3_format)
-            format_key = (excel_format_str, horizontal_align)
-            if format_key not in datetime_alignment_format_cache:
-                datetime_alignment_format_cache[format_key] = workbook.add_format({
-                    'num_format': excel_format_str,
-                    'align': horizontal_align,
-                    'valign': 'vcenter',
-                    'border': 1
-                })
-            column_formats[column] = datetime_alignment_format_cache[format_key]
-        else:
-            column_formats[column] = alignment_formats.get(
-                horizontal_align,
-                workbook.add_format({
-                    'border': 1,
-                    'align': horizontal_align,
-                    'valign': 'vcenter'
-                })
-            )
-    return column_formats
-
-
 def remove_duplicates_in_grouped_columns(df: pd.DataFrame,
                                          column_config: Dict[str, Any],
                                          anchor_column: str) -> pd.DataFrame:
-    """
-    Aynı anchor_column değeri devam ettiği sürece, allowRowGrouping=True
-    işaretli sütunlardaki *sayısal* (int/float) değerleri tekrarlamaz (None yapar).
-    Metinsel değerler ise korunur.
-    """
     if not anchor_column or anchor_column not in df.columns:
-        return df  # anchor_column hatalıysa değiştirmeden döndür
+        return df
 
     last_anchor_val = None
     for i in range(len(df)):
         anchor_val = df.iloc[i][anchor_column]
-
-        # Eğer bu satırın anchor değeri bir önceki satırla aynıysa...
         if anchor_val == last_anchor_val:
-            # Sütunları gez
             for col, config in column_config.items():
-                # allowRowGrouping=True ise...
                 if config.get('allowRowGrouping', False):
                     val = df.iloc[i][col]
-                    # val sayısal mı?
                     if isinstance(val, (int, float, np.integer, np.floating)):
-                        # Tekrarlanan sayısal değeri None yapıyoruz
                         df.at[i, col] = None
-                    else:
-                        pass
         else:
-            # Farklı anchor değeri => bu satırı sakla, sonrakilerle karşılaştır
             last_anchor_val = anchor_val
 
     return df
 
 
 ###############################################################################
-# ANA DATAFRAME'İ EXCEL'E EKLEME (GRUPLU BAŞLIK, BOŞLUKSUZ MERGE)
+# 6.1) YENİ FONKSİYON: HEM NORMAL HEM BOLD FORMATLARI DÖNDÜR
+###############################################################################
+def get_column_formats_pair(workbook, df, formdata, alignment_formats):
+    """
+    Her kolon için 'normal' ve 'bold' format objeleri döndürür,
+    d3NumberFormat varsa num_format uygulanır.
+    
+    Dönüş:
+      {
+         'columnA': {'normal': <Format>, 'bold': <Format>},
+         'columnB': {'normal': <Format>, 'bold': <Format>},
+         ...
+      }
+    """
+    column_formats_pair = {}
+    column_config = formdata.get('column_config', {})
+
+    numeric_columns = df.select_dtypes(include=['number']).columns.tolist()
+    datetime_columns = df.select_dtypes(include=['datetime']).columns.tolist()
+
+    for column in df.columns:
+        config = column_config.get(column, {})
+        d3_format_str = config.get('d3NumberFormat')
+        horizontal_align = config.get('horizontalAlign', 'left')
+
+        if d3_format_str and column in numeric_columns:
+            excel_format_str = d3_to_excel_format(d3_format_str)
+            base_props = {
+                'num_format': excel_format_str,
+                'align': horizontal_align,
+                'valign': 'vcenter',
+                'border': 1
+            }
+            normal_fmt = workbook.add_format(base_props)
+            bold_fmt   = workbook.add_format({**base_props, 'bold': True})
+        elif column in datetime_columns:
+            d3_format_str = config.get('d3NumberFormat', '%d-%m-%Y %H:%M:%S')
+            excel_format_str = d3_to_excel_format(d3_format_str)
+            base_props = {
+                'num_format': excel_format_str,
+                'align': horizontal_align,
+                'valign': 'vcenter',
+                'border': 1
+            }
+            normal_fmt = workbook.add_format(base_props)
+            bold_fmt   = workbook.add_format({**base_props, 'bold': True})
+        else:
+            # string veya diğer tip
+            base_props = {
+                'border': 1,
+                'align': horizontal_align,
+                'valign': 'vcenter'
+            }
+            normal_fmt = workbook.add_format(base_props)
+            bold_fmt   = workbook.add_format({**base_props, 'bold': True})
+
+        column_formats_pair[column] = {
+            "normal": normal_fmt,
+            "bold": bold_fmt
+        }
+
+    return column_formats_pair
+
+
+###############################################################################
+# 7) ANA TABLOYU YAZMA (RAW MANTIĞI) - DÜZELTİLMİŞ
 ###############################################################################
 def add_dataframe_to_excel(writer, df, queryContext, start_row=0, **kwargs):
     """
-    DataFrame'i:
-      - Gruplanmış başlıklarla (groups)
-      - Hem alttan-yukarıya hem üstten-aşağıya doldurma (3 satırlık blok vs.)
-      - Yatay/dikey merge
-      - allowRowGrouping=True sütunlarında dikey merge
-      - Row grouping (dikey merge) sırasında hangi aralıkların merge edildiğini Excel koordinatı olarak logluyoruz.
+    RAW tabloyu excel'e yazar:
+    - Grup başlıkları (jenerik)
+    - Veriler
+    - RAW modunda en alta 'Toplam' satırı isteniyorsa, d3NumberFormat korur.
     """
-    # -- Bazı ön hazırlıklar (formdata, column_config, grouping vb.) --
-    formdata = queryContext.form_data
-    column_config = formdata.get('column_config', {})
-    grouped_columns = parse_grouped_columns(column_config)
-    
-    if any('groups' in config and config['groups'] for config in column_config.values()):
-        max_depth = max(
-            len(config['groups'].split(','))
-            for config in column_config.values()
-            if 'groups' in config and config['groups']
-        )
-    else:
-        max_depth = 0
+    try:
+        formdata = queryContext.form_data
+        column_config = formdata.get('column_config', {})
 
-    # "Total" satırı eklenecek mi? (örnek)
-    has_total_row = False
-    if formdata.get('query_mode', '') == 'raw' and formdata.get('show_column_totals', False):
-        pass
+        grouped_columns = parse_grouped_columns(column_config)
+        if any('groups' in cfg and cfg['groups'] for cfg in column_config.values()):
+            max_depth = max(
+                len(cfg['groups'].split(','))
+                for cfg in column_config.values()
+                if 'groups' in cfg and cfg['groups']
+            )
+        else:
+            max_depth = 0
 
-    # DataFrame'i temizle, HTML linkleri dönüştür
-    convert_html_links(df)
-    df = clean_dataframe(df).applymap(lambda x: safe_value(x) if not pd.isna(x) else x)
+        # RAW modunda column_totals istenmişse, en alta Toplam satırı ekleyebiliriz
+        has_total_row = False
+        if formdata.get("query_mode") == "raw" and formdata.get("show_column_totals", False):
+            numeric_cols = [
+                col for col in df.columns
+                if column_config.get(col, {}).get("showTotal") is True
+                and pd.api.types.is_numeric_dtype(df[col])
+            ]
+            if numeric_cols:
+                total_row = {c: df[c].sum() if c in numeric_cols else "" for c in df.columns}
+                anchor_column = formdata.get("row_grouping_column") or df.columns[0]
+                total_row[anchor_column] = "Toplam"
+                df = pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
+                has_total_row = True
 
-    workbook = writer.book
-    worksheet = writer.sheets['Sheet1']
+        convert_html_links(df)
+        df = clean_dataframe(df).applymap(lambda x: safe_value(x) if not pd.isna(x) else x)
 
-    merge_format = workbook.add_format({
-        'bold': True,
-        'align': 'center',
-        'valign': 'vcenter',
-        'border': 1,
-        'text_wrap': True
-    })
-    cell_format_with_borders = workbook.add_format({'border': 1})
-    link_format = workbook.add_format({'font_color': 'blue', 'underline': True, 'border': 1})
-    null_format = workbook.add_format({'border': 1})
+        workbook = writer.book
+        worksheet = writer.sheets['Sheet1']
 
-    alignment_formats = {}
-    for align in ['left', 'center', 'right']:
-        alignment_formats[align] = workbook.add_format({
+        merge_format = workbook.add_format({
+            'bold': True,
+            'align': 'center',
+            'valign': 'vcenter',
             'border': 1,
-            'align': align,
-            'valign': 'vcenter'
+            'text_wrap': True
         })
+        cell_format_with_borders = workbook.add_format({'border': 1})
+        link_format = workbook.add_format({'font_color': 'blue', 'underline': True, 'border': 1})
+        null_format = workbook.add_format({'border': 1})
 
-    column_formats = get_column_formats(workbook, df, formdata, alignment_formats)
+        alignment_formats = {
+            'left':   workbook.add_format({'border': 1, 'align': 'left',   'valign': 'vcenter'}),
+            'center': workbook.add_format({'border': 1, 'align': 'center', 'valign': 'vcenter'}),
+            'right':  workbook.add_format({'border': 1, 'align': 'right',  'valign': 'vcenter'})
+        }
 
-    # 1) Header gruplama hazırlıkları
-    cell_values = [[''] * len(df.columns) for _ in range(max_depth + 1)]
+        # BURADA eskiden get_column_formats(...) vardı; yerine çift format:
+        column_formats_pair = get_column_formats_pair(workbook, df, formdata, alignment_formats)
 
-    def find_group_for_column(groups, target_col):
-        for group, subgroups in groups.items():
-            if isinstance(subgroups, dict):
-                result = find_group_for_column(subgroups, target_col)
-                if result:
-                    return [group] + result
+        # Grup başlıklarını hazırlama
+        cell_values = [[''] * len(df.columns) for _ in range(max_depth + 1)]
+
+        def find_group_for_column(groups, target_col):
+            for group, subgroups in groups.items():
+                if isinstance(subgroups, dict):
+                    result = find_group_for_column(subgroups, target_col)
+                    if result:
+                        return [group] + result
+                    elif subgroups is None and group == target_col:
+                        return [group]
                 elif subgroups is None and group == target_col:
                     return [group]
-            elif subgroups is None and group == target_col:
-                return [group]
-        return None
+            return None
 
-    # Grupları cell_values'e işleme
-    for col_idx, column_name in enumerate(df.columns):
-        grp = find_group_for_column(grouped_columns, column_name)
-        if grp:
-            for depth, g_ in enumerate(grp):
-                cell_values[depth][col_idx] = g_ or ''
-        cell_values[max_depth][col_idx] = column_name or ''
+        for col_idx, column_name in enumerate(df.columns):
+            grp_list = find_group_for_column(grouped_columns, column_name)
+            if grp_list:
+                for depth, g_ in enumerate(grp_list):
+                    cell_values[depth][col_idx] = g_ or ''
+            cell_values[max_depth][col_idx] = column_name or ''
 
-    # Boşluk doldurma - alttan yukarıya
-    for row_idx in range(max_depth - 1, -1, -1):
-        for col_idx in range(len(df.columns)):
-            if not cell_values[row_idx][col_idx].strip():
-                cell_values[row_idx][col_idx] = cell_values[row_idx + 1][col_idx]
+        for row_idx in range(max_depth - 1, -1, -1):
+            for col_idx in range(len(df.columns)):
+                if not cell_values[row_idx][col_idx].strip():
+                    cell_values[row_idx][col_idx] = cell_values[row_idx + 1][col_idx]
 
-    # Boşluk doldurma - üstten aşağıya
-    for row_idx in range(1, max_depth + 1):
-        for col_idx in range(len(df.columns)):
-            if not cell_values[row_idx][col_idx].strip():
-                cell_values[row_idx][col_idx] = cell_values[row_idx - 1][col_idx]
+        for row_idx in range(1, max_depth + 1):
+            for col_idx in range(len(df.columns)):
+                if not cell_values[row_idx][col_idx].strip():
+                    cell_values[row_idx][col_idx] = cell_values[row_idx - 1][col_idx]
 
-    # 2) Yatay Merge (header)
-    for row in range(max_depth + 1):
-        start_col = 0
-        while start_col < len(df.columns):
-            end_col = start_col
-            while (end_col + 1 < len(df.columns) and
-                   cell_values[row][end_col + 1] == cell_values[row][start_col]):
-                end_col += 1
-            if cell_values[row][start_col]:
-                if start_col != end_col:
-                    try:
+        # Yatay merge
+        for row in range(max_depth + 1):
+            start_col = 0
+            while start_col < len(df.columns):
+                end_col = start_col
+                while (
+                    end_col + 1 < len(df.columns)
+                    and cell_values[row][end_col + 1] == cell_values[row][start_col]
+                ):
+                    end_col += 1
+                if cell_values[row][start_col]:
+                    if start_col != end_col:
                         worksheet.merge_range(
-                            start_row + row, 
+                            start_row + row,
                             start_col,
                             start_row + row,
                             end_col,
                             cell_values[row][start_col],
                             merge_format
                         )
-                    except Exception as e:
-                        if "overlaps" in str(e):
-                            # logger.warning(f"add_dataframe_to_excel header merge çakışma: '{start_row+row},{start_col} -> {start_row+row},{end_col}' overlaps.")
-                            pass                   
-                        else:
-                            raise
-                else:
-                    worksheet.write(
-                        start_row + row,
-                        start_col,
-                        cell_values[row][start_col],
-                        merge_format
-                    )
-            start_col = end_col + 1
+                    else:
+                        worksheet.write(
+                            start_row + row,
+                            start_col,
+                            cell_values[row][start_col],
+                            merge_format
+                        )
+                start_col = end_col + 1
 
-    # 3) Dikey Merge (header)
-    for col_idx in range(len(df.columns)):
-        row_idx = 0
-        while row_idx < max_depth + 1:
-            merge_start = row_idx
-            merge_end = row_idx
-            while (
-                merge_end + 1 < max_depth + 1
-                and cell_values[merge_end + 1][col_idx] == cell_values[merge_start][col_idx]
-            ):
-                merge_end += 1
-            if cell_values[merge_start][col_idx]:
-                if merge_end > merge_start:
-                    try:
+        # Dikey merge
+        for col_idx in range(len(df.columns)):
+            row_idx = 0
+            while row_idx < max_depth + 1:
+                merge_start = row_idx
+                merge_end = row_idx
+                while (
+                    merge_end + 1 < max_depth + 1
+                    and cell_values[merge_end + 1][col_idx] == cell_values[merge_start][col_idx]
+                ):
+                    merge_end += 1
+                if cell_values[merge_start][col_idx]:
+                    if merge_end > merge_start:
                         worksheet.merge_range(
                             start_row + merge_start, col_idx,
                             start_row + merge_end,   col_idx,
                             cell_values[merge_start][col_idx],
                             merge_format
                         )
-                    except Exception as e:
-                        if "overlaps" in str(e):
-                            # logger.warning(f"add_dataframe_to_excel header dikey merge çakışma: '{start_row+merge_start},{col_idx} -> {start_row+merge_end},{col_idx}' overlaps.")
-                            pass                   
-                        else:
-                            raise
-                else:
-                    worksheet.write(
-                        start_row + merge_start,
-                        col_idx,
-                        cell_values[merge_start][col_idx],
-                        merge_format
-                    )
-            row_idx = merge_end + 1
+                    else:
+                        worksheet.write(
+                            start_row + merge_start,
+                            col_idx,
+                            cell_values[merge_start][col_idx],
+                            merge_format
+                        )
+                row_idx = merge_end + 1
 
-    # data_start_row
-    data_start_row = start_row + max_depth + 1
+        data_start_row = start_row + max_depth + 1
 
-    # 4) SATIR GRUPLAMA (ROW GROUPING) -> allowRowGrouping=True
-    try:
         anchor_column = formdata.get('row_grouping_column')
-        if anchor_column:
-            anchor_column_index = df.columns.get_loc(anchor_column)
-        else:
-            anchor_column_index = 0
-    except:
         anchor_column_index = 0
+        if anchor_column and anchor_column in df.columns:
+            anchor_column_index = df.columns.get_loc(anchor_column)
 
-    for col_idx, column_name in enumerate(df.columns):
-        if column_name in column_config and column_config[column_name].get('allowRowGrouping', False):
-            # logger.info(f"Row grouping aktif: Kolon adı = '{column_name}'")
-
-            start_merge_row = None
-            current_value = None
-            for row_idx in range(len(df)):
-                value = df.iloc[row_idx, col_idx]
-                anchor_value = df.iloc[row_idx, anchor_column_index]
-
-                if (
-                    value == current_value
-                    and not pd.isna(value)
-                    and not pd.isna(anchor_value)
-                    and anchor_value == df.iloc[start_merge_row, anchor_column_index]
-                ):
-                    continue
-                else:
-                    if start_merge_row is not None:
-                        if row_idx - 1 != start_merge_row:
-                            try:
+        # Dikey grouping
+        for col_idx, column_name in enumerate(df.columns):
+            if column_name in column_config and column_config[column_name].get('allowRowGrouping', False):
+                start_merge_row = None
+                current_value = None
+                for row_i in range(len(df)):
+                    value = df.iloc[row_i, col_idx]
+                    anchor_value = df.iloc[row_i, anchor_column_index] if anchor_column_index < len(df.columns) else None
+                    if (
+                        value == current_value
+                        and not pd.isna(value)
+                        and not pd.isna(anchor_value)
+                        and anchor_value == df.iloc[start_merge_row, anchor_column_index]
+                    ):
+                        continue
+                    else:
+                        if start_merge_row is not None:
+                            if row_i - 1 != start_merge_row:
                                 worksheet.merge_range(
                                     data_start_row + start_merge_row, col_idx,
-                                    data_start_row + row_idx - 1, col_idx,
-                                    current_value, merge_format
+                                    data_start_row + row_i - 1,       col_idx,
+                                    current_value,
+                                    merge_format
                                 )
-                            except Exception as e:
-                                if "overlaps" in str(e):
-                                    # logger.warning(f"add_dataframe_to_excel satır birleştirme çakışma: {data_start_row+start_merge_row},{col_idx} -> {data_start_row+row_idx-1},{col_idx}")
-                                    pass                   
-                                else:
-                                    raise
+                        current_value = value
+                        start_merge_row = row_i
 
-                            start_cell = indices_to_excel_cell(data_start_row + start_merge_row, col_idx)
-                            end_cell = indices_to_excel_cell(data_start_row + row_idx - 1, col_idx)
-                            
-                        else:
-                            single_cell = indices_to_excel_cell(data_start_row + start_merge_row, col_idx)
-                            worksheet.write(
-                                data_start_row + start_merge_row,
-                                col_idx,
-                                current_value,
-                                merge_format
-                            )
-                            
-                    current_value = value
-                    start_merge_row = row_idx
-
-            # Son grup
-            if start_merge_row is not None and (not has_total_row):
-                if start_merge_row != len(df) - 1:
-                    try:
+                if start_merge_row is not None and not has_total_row:
+                    if start_merge_row != len(df) - 1:
                         worksheet.merge_range(
                             data_start_row + start_merge_row, col_idx,
-                            data_start_row + len(df) - 1, col_idx,
-                            current_value, merge_format
+                            data_start_row + len(df) - 1,     col_idx,
+                            current_value,
+                            merge_format
                         )
-                    except Exception as e:
-                        if "overlaps" in str(e):
-                            # logger.warning(f"add_dataframe_to_excel satır birleştirme çakışma (SON GRUP): {data_start_row+start_merge_row},{col_idx} -> {data_start_row+len(df)-1},{col_idx}")
-                            pass                   
-                        else:
-                            raise
 
-                    start_cell = indices_to_excel_cell(data_start_row + start_merge_row, col_idx)
-                    end_cell = indices_to_excel_cell(data_start_row + len(df) - 1, col_idx)
-                    
+        remove_duplicates_in_grouped_columns(df, column_config, anchor_column)
+
+        # Yazma işlemi
+        # Not: "has_total_row" ile son satır 'Toplam' -> bold numeric format
+        for row_num, row_data in enumerate(df.itertuples(index=False)):
+            is_total_row = has_total_row and (row_num == len(df) - 1)
+            for col_num, value in enumerate(row_data):
+                cell_row = data_start_row + row_num
+                cell_col = col_num
+                col_name = df.columns[col_num]
+
+                # Hangi format seti?
+                if is_total_row:
+                    # Tüm hücreyi bold yapmak isterseniz:
+                    #   numeric -> bold numeric
+                    #   string -> bold string
+                    # Yani pair'daki "bold" versiyonunu seçiyoruz
+                    fmt = column_formats_pair[col_name]["bold"]
                 else:
-                    single_cell = indices_to_excel_cell(data_start_row + start_merge_row, col_idx)
-                    worksheet.write(
-                        data_start_row + start_merge_row,
-                        col_idx,
-                        current_value,
-                        merge_format
-                    )
+                    fmt = column_formats_pair[col_name]["normal"]
 
-    # (Opsiyonel) Tekrarlı hücre değerlerini silmek isterseniz:
-    remove_duplicates_in_grouped_columns(df, column_config, anchor_column)
+                # Değer yazma
+                if pd.isna(value):
+                    worksheet.write_blank(cell_row, cell_col, None, fmt)
+                elif isinstance(value, tuple):
+                    worksheet.write_url(cell_row, cell_col, value[0], string=value[1], cell_format=fmt)
+                elif isinstance(value, pd.Timestamp):
+                    worksheet.write_datetime(cell_row, cell_col, value, fmt)
+                elif isinstance(value, numbers.Number):
+                    worksheet.write_number(cell_row, cell_col, value, fmt)
+                else:
+                    worksheet.write(cell_row, cell_col, value, fmt)
 
-    # 5) Veri Yazma (body)
-    for row_num, row_data in enumerate(df.itertuples(index=False)):
-        for col_num, value in enumerate(row_data):
-            cell_row = data_start_row + row_num
-            cell_col = col_num
-            val = value
-            col_name = df.columns[col_num]
-            fmt = column_formats.get(col_name, cell_format_with_borders)
-
-            if pd.isna(val):
-                worksheet.write_blank(cell_row, cell_col, None, null_format)
-            elif isinstance(val, tuple):
-                worksheet.write_url(cell_row, cell_col, val[0], string=val[1], cell_format=link_format)
-            elif isinstance(val, pd.Timestamp):
-                worksheet.write_datetime(cell_row, cell_col, val, fmt)
-            elif isinstance(val, numbers.Number):
-                worksheet.write_number(cell_row, cell_col, val, fmt)
+        # Kolon genişliklerini ayarla
+        for i, c_ in enumerate(df.columns):
+            if c_ in column_config and 'columnWidth' in column_config[c_]:
+                w_ = column_config[c_]['columnWidth'] or 15
+                worksheet.set_column(i, i, w_)
             else:
-                worksheet.write(cell_row, cell_col, val, fmt)
+                worksheet.set_column(i, i, 15)
 
-    # 6) Sütun Genişliği
-    for i, c_ in enumerate(df.columns):
-        if c_ in column_config and 'columnWidth' in column_config[c_]:
-            w_ = column_config[c_]['columnWidth'] or 15
-            worksheet.set_column(i, i, w_)
-        else:
-            worksheet.set_column(i, i, 15)
+    except Exception as ex:
+        print("[ERROR] add_dataframe_to_excel:", ex)
+        print(traceback.format_exc())
+        raise
 
 
 ###############################################################################
-# HORIZONTAL TABLE (enableHorizontalMode)
+# 8) HORIZONTAL MODE
 ###############################################################################
 def addHorizontalTable(writer, df, queryContext, start_row=0, **kwargs):
-    """
-    enableHorizontalMode=True durumunda her sütunu bir satır gibi yazar.
-    (Bu kısımda da basit mantık kullanıyoruz.)
-    """
     worksheet = writer.sheets['Sheet1'] if 'Sheet1' in writer.sheets else None
     workbook = writer.book
     formdata = queryContext.form_data
 
-    # Formatlar
     header_format = workbook.add_format({
         'bold': True,
         'bg_color': '#F0F0F0',
@@ -1237,7 +1111,6 @@ def addHorizontalTable(writer, df, queryContext, start_row=0, **kwargs):
     })
     link_format = workbook.add_format({'font_color': 'blue', 'underline': True})
 
-    # Gruplar
     column_config = formdata.get('column_config', {})
     grouped_columns = {}
     merged_ranges = set()
@@ -1270,10 +1143,8 @@ def addHorizontalTable(writer, df, queryContext, start_row=0, **kwargs):
         else:
             column_groups[col] = [''] * max_depth
 
-    # Sütun -> satır
     for column in df.columns:
         groups = column_groups[column]
-        # Üst grupları yaz
         for depth, group in enumerate(groups):
             if group:
                 group_key = tuple(groups[:depth + 1])
@@ -1293,15 +1164,12 @@ def addHorizontalTable(writer, df, queryContext, start_row=0, **kwargs):
             else:
                 worksheet.write(current_row, depth, '', header_format)
 
-        # Kolon ismi
         worksheet.write(current_row, max_depth, column, header_format)
 
-        # Post-processing
-        df = table(df, formdata)
-        convert_html_links(df)
+        df2 = table(df, formdata)  # Post-processing
+        convert_html_links(df2)
 
-        # Kolon verisi yanyana
-        for data_idx, value in enumerate(df[column]):
+        for data_idx, value in enumerate(df2[column]):
             if isinstance(value, tuple):
                 worksheet.write_url(current_row, max_depth + 1 + data_idx, value[0], string=value[1], cell_format=link_format)
             else:
@@ -1310,14 +1178,12 @@ def addHorizontalTable(writer, df, queryContext, start_row=0, **kwargs):
 
         current_row += 1
 
-    # Otomatik sütun genişliği
     for col in range(max_depth + 1):
         worksheet.set_column(col, col, 30)
     for col in range(max_depth + 1, max_depth + 1 + len(df.columns)):
         worksheet.set_column(col, col, 15)
 
     return current_row
-
 
 def addPivotTable(writer, df, queryContext, start_row=0, **kwargs):
     formdata = queryContext.form_data
@@ -1431,7 +1297,7 @@ def addPivotTable(writer, df, queryContext, start_row=0, **kwargs):
             else:
                 worksheet.write(cell_row, cell_col, val, fmt)
 ###############################################################################
-# GRUPSUZ TABLO
+# 9) GRUPSUZ TABLO
 ###############################################################################
 def addTablewithoutgrouping(writer, df, formdata, start_row=0, **kwargs):
     df.to_excel(writer, index=True, startrow=start_row + 1, header=True, sheet_name='Sheet1')
@@ -1444,24 +1310,26 @@ def apply_white_background_to_all_cells(worksheet, white_fill_format, max_row=12
 
 
 ###############################################################################
-# BİRDEN FAZLA TABLOYU TEK EXCEL DOSYASINA EKLE
+# 10) BİRDEN FAZLA TABLOYU TEK EXCEL DOSYASINA EKLEME (create_excel_for_dashboard)
 ###############################################################################
 def create_excel_for_dashboard(dataframes, **kwargs) -> Any:
     """
-    dataframes: [
-      {
-        "header": "Metin",
-        "markdown": "Bazı <b>HTML</b>",
-        "background_colors": [{"color":"#FF0000","start_cell":"A1","end_cell":"B2"}],
-        "font_colors": [...],
-        "dataframe": <pandas DataFrame>,
-        "query_context": <superset context>,
-      },
-      ...
-    ]
+    dataframes: 
+      [
+        {
+          'header': "...",
+          'markdown': "...",
+          'dataframe': [df1, df2],
+          'query_context': { 'form_data': {...} },
+          'background_colors': [...],
+          'font_colors': [...]
+        },
+        ...
+      ]
     """
     output = io.BytesIO()
     max_columns = 10
+
     with pd.ExcelWriter(
         output,
         engine='xlsxwriter',
@@ -1472,7 +1340,7 @@ def create_excel_for_dashboard(dataframes, **kwargs) -> Any:
         worksheet = workbook.add_worksheet('Sheet1')
         writer.sheets['Sheet1'] = worksheet
 
-        # Tüm hücreler beyaz
+        # Örnek: Tüm hücrelere beyaz arkaplan (ihtiyaca göre)
         white_fill_format = workbook.add_format({'bg_color': 'white'})
         apply_white_background_to_all_cells(worksheet, white_fill_format)
 
@@ -1495,33 +1363,30 @@ def create_excel_for_dashboard(dataframes, **kwargs) -> Any:
             'align': 'center',
             'border': 1
         })
-        link_format = workbook.add_format({
-            'font_color': 'blue',
-            'underline': True
-        })
 
-        for chart in dataframes:
-            # 1) Header
+        for chart_idx, chart in enumerate(dataframes):
+            # 1) header varsa yaz
             if 'header' in chart:
                 start_row = add_header_or_markdown(
-                    worksheet, 
-                    start_row, 
-                    chart['header'], 
-                    max_columns, 
+                    worksheet,
+                    start_row,
+                    chart['header'],
+                    max_columns,
                     header_format,
                     workbook
                 )
-            # 2) Markdown
+            # 2) markdown varsa yaz
             if 'markdown' in chart:
                 start_row = add_header_or_markdown(
-                    worksheet, 
-                    start_row, 
-                    chart['markdown'], 
-                    max_columns, 
+                    worksheet,
+                    start_row,
+                    chart['markdown'],
+                    max_columns,
                     markdown_format,
                     workbook
                 )
-            # 3) Renk direktifleri
+
+            # 3) background_colors varsa uygula
             if 'background_colors' in chart:
                 for bg_directive in chart['background_colors']:
                     color = bg_directive['color']
@@ -1535,6 +1400,7 @@ def create_excel_for_dashboard(dataframes, **kwargs) -> Any:
                         'format': bg_format
                     })
 
+            # 4) font_colors varsa uygula
             if 'font_colors' in chart:
                 for fc_directive in chart['font_colors']:
                     color = fc_directive['color']
@@ -1548,67 +1414,124 @@ def create_excel_for_dashboard(dataframes, **kwargs) -> Any:
                         'format': fc_format
                     })
 
-            # 4) DataFrame
+            # 5) asıl dataframe(ler) varsa ekle
             if 'dataframe' in chart:
-                form_data = chart['query_context'].form_data
-                titleRow = form_data.get('titleRow', False)
+                dfs = chart['dataframe']
+                if isinstance(dfs, pd.DataFrame):
+                    dfs = [dfs]
 
-                # max_depth
-                max_depth = calculate_max_depth(
-                    parse_grouped_columns(form_data.get('column_config', {}))
+                # Aggregate modda tek DF varsa 2. DF olarak "GENEL TOPLAM" ekle
+                formdata = chart["query_context"].form_data
+                viz_type = formdata.get("viz_type", "")
+
+                # ------------------------------------------------------------
+                #  pivot_table_v2 ÖZEL DURUMU
+                # ------------------------------------------------------------
+                if viz_type == "pivot_table_v2":
+                    # Genelde pivot_table_v2 çıktısı tek bir DF olur
+                    pivot_df = dfs[0]
+                    addPivotTable(writer, pivot_df, chart["query_context"], start_row)
+
+                    # yazılan satırların altına 2-3 satır boşluk bırak
+                    start_row += len(pivot_df) + 3
+                    continue  # pivot işlendikten sonra döngünün bir sonraki chart’ına geç
+
+                # 1️⃣  Hangi anahtar(lar) sizin grafikte kullanılıyorsa ekleyin
+                show_summary = (
+                    formdata.get("show_totals")        # ör. pivot_table_v2
+                    or formdata.get("show_summary")    # ör. bazı özel görseller
+                    or formdata.get("show_column_totals")  # eski raw-mode total anahtarı
                 )
 
-                # Horizontal Mode -> satırlar sütun olur
-                if form_data.get('enableHorizontalMode', False):
-                    data_width = len(chart['dataframe'].index) + max_depth + 1
-                    max_columns = max(max_columns, data_width)
-                else:
-                    data_width = len(chart['dataframe'].columns) + 1
-                    max_columns = max(max_columns, len(chart['dataframe'].columns))
+                # 2️⃣  “Aggregate + tek DF + summary açık” ise GENEL TOPLAM ekle
+                if is_aggregate_chart(chart["query_context"]) and len(dfs) == 1 and show_summary:
+                    total_df = build_grand_total_df(dfs[0], label="GENEL TOPLAM")
+                    dfs.append(total_df)
 
-                # Title satırı
-                if titleRow and len(titleRow) > 0:
-                    add_header_or_markdown(
-                        worksheet, 
-                        start_row, 
-                        titleRow, 
-                        data_width, 
-                        title_format,
-                        workbook
+                # RAW + show_column_totals kontrolü
+                form_data = chart['query_context'].form_data
+                is_raw_total = (
+                    form_data.get("query_mode") == "raw"
+                    and form_data.get("show_column_totals") is True
+                )
+                # AGGREGATE kontrolü
+                is_agg = is_aggregate_chart(chart["query_context"])
+
+                for idx_df, df in enumerate(dfs):
+                    titleRow = form_data.get('titleRow', False)
+
+                    # Hesaplayacağımız tablo genişliği vs.
+                    max_depth = calculate_max_depth(
+                        parse_grouped_columns(form_data.get('column_config', {}))
                     )
-                    start_row += 1
+                    if form_data.get('enableHorizontalMode', False):
+                        data_width = len(df.index) + max_depth + 1
+                    else:
+                        data_width = len(df.columns) + 1
 
-                # Gruplama/Horizontal
-                if form_data.get('enableGrouping', False) and (not form_data.get('enableHorizontalMode', False)):
-                    add_dataframe_to_excel(writer, chart['dataframe'], chart['query_context'], start_row)
-                elif form_data.get('enableHorizontalMode', False):
-                    start_row = addHorizontalTable(
-                        writer,
-                        chart['dataframe'],
-                        chart['query_context'],
-                        start_row
-                    ) + 1
-                elif form_data.get('viz_type','') == 'pivot_table_v2':
-                    addPivotTable(writer, chart['dataframe'], chart['query_context'], start_row)
-                else:
-                    # Gruplama yok
-                    addTablewithoutgrouping(writer, chart['dataframe'], chart['query_context'], start_row)
+                    # 5.1) titleRow basma (ilk DF için)
+                    if titleRow and len(titleRow) > 0 and idx_df == 0:
+                        old_start = start_row
+                        start_row = add_header_or_markdown(
+                            worksheet,
+                            start_row,
+                            titleRow,
+                            data_width,
+                            title_format,
+                            workbook
+                        )
+                        # Burada fazladan satırı geri al: Sadece 'toplam' modlarında
+                        if is_agg or is_raw_total:
+                            start_row -= 1  # fazladan gelen 1 satırı yok et
 
-                # Yatay tablo değilse, tablo kadar satır ilerle
-                if not form_data.get('enableHorizontalMode', False):
-                    start_row += len(chart['dataframe']) + max_depth + 3
+                    # 5.2) aggregate modda 2 DF varsa
+                    if is_aggregate_chart(chart["query_context"]) and len(dfs) == 2:
+                        if idx_df == 0:
+                            # 1. DF
+                            if form_data.get('enableGrouping', False) and not form_data.get('enableHorizontalMode', False):
+                                add_dataframe_to_excel(writer, df, chart["query_context"], start_row)
+                            elif form_data.get('enableHorizontalMode', False):
+                                start_row = addHorizontalTable(
+                                    writer,
+                                    df,
+                                    chart["query_context"],
+                                    start_row
+                                ) + 1
+                            else:
+                                addTablewithoutgrouping(writer, df, chart["query_context"], start_row)
+
+                            if not form_data.get('enableHorizontalMode', False):
+                                start_row += len(df) + max_depth + 1
+                        else:
+                            # 2. DF -> "GENEL TOPLAM"
+                            start_row = add_right_shifted_table(writer, df, chart["query_context"], start_row, label="GENEL TOPLAM")
+                            start_row += 3
+
+                    else:
+                        # Normal senaryo
+                        if form_data.get('enableGrouping', False) and not form_data.get('enableHorizontalMode', False):
+                            add_dataframe_to_excel(writer, df, chart["query_context"], start_row)
+                        elif form_data.get('enableHorizontalMode', False):
+                            start_row = addHorizontalTable(
+                                writer,
+                                df,
+                                chart["query_context"],
+                                start_row
+                            ) + 1
+                        else:
+                            addTablewithoutgrouping(writer, df, chart["query_context"], start_row)
+
+                        if not form_data.get('enableHorizontalMode', False):
+                            start_row += len(df) + max_depth + 3
 
     return output.getvalue()
 
 
+
 ###############################################################################
-# TEK DATAFRAME'İ MERGE EDİLMİŞ BAŞLIKLARLA EXCEL'E EKLEME
+# 11) Tek DataFrame Örneği
 ###############################################################################
 def create_excel_with_merged_headers(df, queryContext) -> Any:
-    """
-    Tek bir DataFrame'i gruplu başlıklarla Excel'e yazmak için kısaltılmış örnek fonksiyon.
-    Boşluk kalmasın diye add_dataframe_to_excel fonksiyonunun değiştirilmiş halini kullanıyoruz.
-    """
     output = io.BytesIO()
     with pd.ExcelWriter(
         output,
@@ -1622,7 +1545,6 @@ def create_excel_with_merged_headers(df, queryContext) -> Any:
         writer.sheets['Sheet1'] = worksheet
 
         if queryContext.form_data.get('enableHorizontalMode', False):
-            # Yatay tablo
             markdown_format = workbook.add_format({
                 'bold': True,
                 'text_wrap': True,
@@ -1635,10 +1557,10 @@ def create_excel_with_merged_headers(df, queryContext) -> Any:
             )
             if titleRow and len(titleRow) > 0:
                 add_header_or_markdown(
-                    worksheet, 
-                    start_row, 
-                    titleRow, 
-                    len(df.index) + max_depth + 1, 
+                    worksheet,
+                    start_row,
+                    titleRow,
+                    len(df.index) + max_depth + 1,
                     markdown_format,
                     workbook
                 )
@@ -1646,7 +1568,6 @@ def create_excel_with_merged_headers(df, queryContext) -> Any:
 
             addHorizontalTable(writer, df, queryContext, start_row)
         else:
-            # Dikey (normal) tablo, boşluksuz merge
             if titleRow and len(titleRow) > 0:
                 markdown_format = workbook.add_format({
                     'text_wrap': True,
@@ -1654,10 +1575,10 @@ def create_excel_with_merged_headers(df, queryContext) -> Any:
                     'align': 'center'
                 })
                 add_header_or_markdown(
-                    worksheet, 
-                    start_row, 
-                    titleRow, 
-                    len(df.columns) + 1, 
+                    worksheet,
+                    start_row,
+                    titleRow,
+                    len(df.columns) + 1,
                     markdown_format,
                     workbook
                 )
