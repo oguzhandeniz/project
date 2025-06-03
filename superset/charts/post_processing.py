@@ -605,7 +605,7 @@ def pivot_df(
                 total_label = metric_name if level == 0 else __("Subtotal")
                 subtotal.name = tuple([*subgroup, total_label, *("" for _ in range(depth))])
                 df = pd.concat([df[: slice_.stop], subtotal.to_frame().T, df[slice_.stop :]])
-
+        df.index.names = groups.names
     # metrics_on_rows => transpose
     if apply_metrics_on_rows:
         df = df.T

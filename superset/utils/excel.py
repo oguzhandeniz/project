@@ -642,6 +642,11 @@ def d3_to_excel_format(d3_format):
         ',.1%': '#,##0.0%',
         ',.2%': '#,##0.00%',
         ',.3%': '#,##0.000%',
+        '%B': 'mmmm',            # Full month name (Mart, Nisan, etc.)
+        '%b': 'mmm',             # Abbreviated month name
+        '%Y': 'yyyy',            # 4-digit year
+        '%m': 'mm',              # 2-digit month
+        '%d': 'dd',              # 2-digit day
         '%d-%m-%Y %H:%M:%S': 'dd-mm-yyyy hh:mm:ss',
     }
     date_time_pattern = re.compile(r'%[dmyHMS\- :]+')
@@ -1189,113 +1194,58 @@ def addPivotTable(writer, df, queryContext, start_row=0, **kwargs):
     formdata = queryContext.form_data
     workbook = writer.book
     worksheet = writer.sheets['Sheet1']
-    cell_format_with_borders = workbook.add_format({'border': 1})
-    null_format = workbook.add_format({'border': 1})
-    alignment_formats = {}
-    for align in ['left', 'center', 'right']:
-        alignment_formats[align] = workbook.add_format({
-            'border': 1,
-            'align': align,
-            'valign': 'vcenter'
-        })
+    
+    # Get column formats based on D3 settings
+    column_formats = get_pivot_column_formats(workbook, df, formdata, {})
 
-    column_formats = get_pivot_column_formats(workbook, df, formdata, alignment_formats)
-
-    # First, write the data using pandas native method to get proper merging
+    # First, write the data using pandas native method (this handles subtotals, merging, etc.)
     df.to_excel(writer, index=True, startrow=start_row, header=True, sheet_name='Sheet1')
 
-    # Now apply custom formatting to the written cells
-    worksheet = writer.sheets['Sheet1']
-
-    # Calculate the actual range of written data
+    # Calculate dimensions
     num_index_cols = len(df.index.names) if hasattr(df.index, 'names') and df.index.names else 1
     num_data_cols = len(df.columns)
-    num_rows = len(df) + 1  # +1 for header row
-
-    # Apply formatting to header row
-    header_row = start_row
-    col_num = 0
-
-    # Format index column headers
-    if hasattr(df.index, 'names') and df.index.names:
-        index_names = [name for name in df.index.names if name is not None]
-        for index_name in index_names:
-            header_format = column_formats.get(index_name, cell_format_with_borders)
-            # Read existing value and rewrite with format
-            try:
-                existing_value = worksheet._get_cell(header_row, col_num).value if hasattr(worksheet, '_get_cell') else str(index_name)
-            except:
-                existing_value = str(index_name)
-            worksheet.write(header_row, col_num, existing_value or str(index_name), header_format)
-            col_num += 1
-
-    # Format data column headers
-    for col_name in df.columns:
-        header_format = column_formats.get(col_name, cell_format_with_borders)
-        # Handle MultiIndex column names
-        if isinstance(col_name, tuple):
-            display_name = ' '.join(str(x) for x in col_name if x is not None)
-        else:
-            display_name = str(col_name)
-        worksheet.write(header_row, col_num, display_name, header_format)
-        col_num += 1
-
-    # Apply formatting to data cells (preserve existing values, just change format)
-    for row_num in range(len(df)):
-        cell_row = start_row + 1 + row_num
-        col_num = 0
+    end_row = start_row + len(df)  # Last row with data
+    
+    # Apply conditional formatting to ranges for each column
+    for col in range(num_index_cols + num_data_cols):
         
-        # Format index columns
-        if hasattr(df.index, 'names') and df.index.names:
-            index_names = [name for name in df.index.names if name is not None]
-            
-            if isinstance(df.index, pd.MultiIndex):
-                current_index_values = list(df.index[row_num])
-            else:
-                current_index_values = [df.index[row_num]]
-            
-            for level_num, (index_name, current_value) in enumerate(zip(index_names, current_index_values)):
-                fmt = column_formats.get(index_name, cell_format_with_borders)
-                
-                # Get the existing cell value (might be empty due to merging)
-                try:
-                    existing_cell = worksheet._get_cell(cell_row, col_num) if hasattr(worksheet, '_get_cell') else None
-                    existing_value = existing_cell.value if existing_cell else current_value
-                except:
-                    existing_value = current_value
-                
-                # Only rewrite if there's an actual value (respect pandas merging)
-                if existing_value is not None and str(existing_value).strip():
-                    val = existing_value
-                    if isinstance(val, pd.Timestamp):
-                        worksheet.write_datetime(cell_row, col_num, val, fmt)
-                    elif isinstance(val, numbers.Number):
-                        worksheet.write_number(cell_row, col_num, val, fmt)
-                    else:
-                        worksheet.write(cell_row, col_num, val, fmt)
+        # Determine which column this represents
+        if col < num_index_cols:
+            # This is an index column
+            if hasattr(df.index, 'names') and df.index.names:
+                index_names = [name for name in df.index.names if name is not None]
+                if col < len(index_names):
+                    col_name = index_names[col]
                 else:
-                    # Apply format to empty/merged cells
-                    worksheet.write_blank(cell_row, col_num, None, fmt)
-                
-                col_num += 1
-        
-        # Format data columns
-        row_data = df.iloc[row_num]
-        for data_col_num, (col_name, value) in enumerate(row_data.items()):
-            cell_col = col_num + data_col_num
-            val = value
-            fmt = column_formats.get(col_name, cell_format_with_borders)
-
-            if pd.isna(val):
-                worksheet.write_blank(cell_row, cell_col, None, null_format)
-            elif isinstance(val, tuple):
-                worksheet.write_url(cell_row, cell_col, val[0], string=val[1], cell_format=link_format)
-            elif isinstance(val, pd.Timestamp):
-                worksheet.write_datetime(cell_row, cell_col, val, fmt)
-            elif isinstance(val, numbers.Number):
-                worksheet.write_number(cell_row, cell_col, val, fmt)
+                    continue
             else:
-                worksheet.write(cell_row, cell_col, val, fmt)
+                col_name = df.index.name or 'index'
+        else:
+            # This is a data column
+            data_col_index = col - num_index_cols
+            if data_col_index < len(df.columns):
+                col_name = df.columns[data_col_index]
+            else:
+                continue
+        
+        # Get the format for this column
+        fmt = column_formats.get(col_name)
+        if fmt:
+            # Define the range for this column (skip header, include all data)
+            col_letter = chr(65 + col) if col < 26 else chr(65 + col // 26 - 1) + chr(65 + col % 26)
+            cell_range = f'{col_letter}{start_row + 3}:{col_letter}{end_row + 2}'
+            
+            
+             # Different threshold for each column
+            unique_criteria_value = -999999999 + col 
+            worksheet.conditional_format(cell_range, {
+                'type': 'cell',
+                'criteria': '>=',
+                'value': unique_criteria_value,
+                'format': fmt,
+                'stop_if_true': False  # Don't stop processing other rules
+            })
+
 ###############################################################################
 # 9) GRUPSUZ TABLO
 ###############################################################################
