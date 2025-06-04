@@ -992,7 +992,7 @@ class DashboardRestApi(BaseSupersetModelRestApi):
               dataframe = query_context.get_df_payload(query_context.queries[0])
               columns = list(dataframe['df'].columns)
               verbose_map = query_context.datasource.verbose_map
-              if verbose_map:
+              if verbose_map and  (not query_context.form_data.get('viz_type','') == 'pivot_table_v2'):
                   dataframe['df'].columns = [verbose_map.get(column, column) for column in columns]
               if query_context.form_data.get('viz_type','') == 'pivot_table_v2':
                 dataframe['df'] = pivot_table_v2(dataframe['df'],query_context.form_data)

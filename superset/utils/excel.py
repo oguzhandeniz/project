@@ -1197,10 +1197,8 @@ def addPivotTable(writer, df, queryContext, start_row=0, **kwargs):
     
     # Get column formats based on D3 settings
     column_formats = get_pivot_column_formats(workbook, df, formdata, {})
-
-    # First, write the data using pandas native method (this handles subtotals, merging, etc.)
-    df.to_excel(writer, index=True, startrow=start_row, header=True, sheet_name='Sheet1')
-
+    
+    
     # Calculate dimensions
     num_index_cols = len(df.index.names) if hasattr(df.index, 'names') and df.index.names else 1
     num_data_cols = len(df.columns)
@@ -1245,6 +1243,15 @@ def addPivotTable(writer, df, queryContext, start_row=0, **kwargs):
                 'format': fmt,
                 'stop_if_true': False  # Don't stop processing other rules
             })
+    verbose_map = queryContext.datasource.verbose_map
+    if verbose_map:
+        df.index.names = [verbose_map.get(name, name) for name in df.index.names]
+        df.columns = pd.MultiIndex.from_tuples(
+            [tuple(verbose_map.get(item, item) for item in col) for col in df.columns],
+            names=df.columns.names  # preserve original names
+        )
+    # First, write the data using pandas native method (this handles subtotals, merging, etc.)
+    df.to_excel(writer, index=True, startrow=start_row, header=True, sheet_name='Sheet1')
 
 ###############################################################################
 # 9) GRUPSUZ TABLO
