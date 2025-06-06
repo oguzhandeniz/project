@@ -671,6 +671,11 @@ def _get_pivot_column_types(df, formdata):
     temporal_column_names = [col for col, is_temporal in temporal_lookup.items() if is_temporal]
     
     all_columns_to_check = list(df.columns)
+
+    groupby_columns = formdata.get('groupbyColumns', [])
+    for col in groupby_columns:
+        if col not in all_columns_to_check:
+            all_columns_to_check.append(col)
     
     if hasattr(df.index, 'names') and df.index.names:
         for index_name in df.index.names:
@@ -703,6 +708,12 @@ def _get_pivot_column_types(df, formdata):
                     datetime_columns.append(col)
         except (IndexError, AttributeError):
             numeric_columns.append(col)
+    
+    # Check groupbyColumns for type classification
+    for col_name in groupby_columns:
+        if col_name in temporal_lookup and temporal_lookup[col_name]:
+            if col_name not in datetime_columns:
+                datetime_columns.append(col_name)
     
     for index_name in (df.index.names or []):
         if index_name and index_name in temporal_column_names and index_name not in datetime_columns:
@@ -1252,7 +1263,31 @@ def addPivotTable(writer, df, queryContext, start_row=0, **kwargs):
         )
     # First, write the data using pandas native method (this handles subtotals, merging, etc.)
     df.to_excel(writer, index=True, startrow=start_row, header=True, sheet_name='Sheet1')
-
+    groupby_columns = formdata.get('groupbyColumns', [])
+    if len(groupby_columns) == 1:
+        # Format the second header row (groupbyColumns values like dates)
+        fmt = column_formats.get(groupby_columns[0])
+        if fmt:
+            # The second header row starts after index columns
+            start_col = num_index_cols
+            end_col = start_col + num_data_cols - 1
+            
+            # Convert to Excel column letters
+            start_col_letter = chr(65 + start_col) if start_col < 26 else chr(65 + start_col // 26 - 1) + chr(65 + start_col % 26)
+            end_col_letter = chr(65 + end_col) if end_col < 26 else chr(65 + end_col // 26 - 1) + chr(65 + end_col % 26)
+            
+            # Format the header row (row index start_row + 2 for the second level of MultiIndex)
+            header_range = f'{start_col_letter}{start_row + 2}:{end_col_letter}{start_row + 2}'
+            
+            # Use a unique criteria value for header formatting
+            unique_criteria_value = -888888888
+            worksheet.conditional_format(header_range, {
+                'type': 'cell',
+                'criteria': '>=',
+                'value': unique_criteria_value,
+                'format': fmt,
+                'stop_if_true': False
+            })
 ###############################################################################
 # 9) GRUPSUZ TABLO
 ###############################################################################
